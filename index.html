@@ -261,10 +261,12 @@
       ev.preventDefault();
     }
     audioSystem.resume(); // キー操作でオーディオコンテキストを解放
+
     if (gamePhase === "title" && !ev.repeat && (ev.code === "Space" || ev.code === "Enter")) {
       startFromTitle(); // タイトル画面からゲーム開始
       return;
     }
+
     keys.add(ev.code);
     if (!ev.repeat && ev.code === "KeyF") {
       missileRequest = true; // ミサイルは単発入力で発射要求
@@ -3004,9 +3006,11 @@
     const missileText = Number.isFinite(MISSILE_STOCK_MAX)
       ? `MISSILES ${missilesRemaining}/${MISSILE_STOCK_MAX}`
       : "MISSILES ∞"; // 無限ストックであることをHUDに表示
+
     if (gamePhase === "title") {
       hudLabel.textContent = "STAR DOGS / PRESS START";
     } else if (gamePhase === "stage0") {
+
       hudLabel.textContent = "LAUNCH BAY / PREP SEQUENCE";
     } else if (stageClear) {
       hudLabel.textContent = "MISSION COMPLETE";
