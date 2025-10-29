@@ -52,16 +52,137 @@
 
   // === 入力状態 ===
   const keys = new Set();
+
+  // === オーディオシステム構築（ユーザー操作後に初期化） ===
+  const audioSystem = (() => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    let ctx = null;
+    let noiseBuffer = null;
+
+    // 乱数ノイズのバッファを生成して爆発音の素材とする
+    const getNoiseBuffer = (context) => {
+      if (noiseBuffer) return noiseBuffer;
+      const duration = 1.2;
+      const buffer = context.createBuffer(1, Math.floor(context.sampleRate * duration), context.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      noiseBuffer = buffer;
+      return noiseBuffer;
+    };
+
+    // コンテキストを確保し、必要に応じて再開する
+    const withContext = (fn) => {
+      if (!AudioContextClass) return;
+      if (!ctx) {
+        ctx = new AudioContextClass();
+      }
+      if (ctx.state === "suspended") {
+        ctx.resume();
+      }
+      fn(ctx);
+    };
+
+    return {
+      resume() {
+        if (!AudioContextClass) return;
+        if (!ctx) {
+          ctx = new AudioContextClass();
+        }
+        if (ctx.state === "suspended") {
+          ctx.resume();
+        }
+      },
+      playLaserShot() {
+        withContext((context) => {
+          const now = context.currentTime;
+          const gain = context.createGain();
+          gain.gain.setValueAtTime(0.22, now);
+          gain.gain.exponentialRampToValueAtTime(0.002, now + 0.16);
+
+          const osc = context.createOscillator();
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(880, now);
+          osc.frequency.exponentialRampToValueAtTime(1660, now + 0.12);
+
+          osc.connect(gain).connect(context.destination);
+          osc.start(now);
+          osc.stop(now + 0.18);
+        });
+      },
+      playExplosion(intensity = 1) {
+        withContext((context) => {
+          const now = context.currentTime;
+          const source = context.createBufferSource();
+          source.buffer = getNoiseBuffer(context);
+
+          const filter = context.createBiquadFilter();
+          filter.type = "lowpass";
+          const cutoff = 600 + Math.min(intensity, 4) * 420;
+          filter.frequency.setValueAtTime(cutoff, now);
+          filter.Q.setValueAtTime(0.8, now);
+
+          const gain = context.createGain();
+          const startGain = 0.32 * Math.min(intensity, 3.5);
+          gain.gain.setValueAtTime(startGain, now);
+          gain.gain.exponentialRampToValueAtTime(0.002, now + 0.9);
+
+          source.connect(filter).connect(gain).connect(context.destination);
+          source.start(now);
+          source.stop(now + 1.0);
+        });
+      },
+      playWaveCannon() {
+        withContext((context) => {
+          const now = context.currentTime;
+          const duration = 1.8;
+
+          const bassOsc = context.createOscillator();
+          bassOsc.type = "square";
+          bassOsc.frequency.setValueAtTime(110, now);
+          bassOsc.frequency.exponentialRampToValueAtTime(260, now + 0.9);
+
+          const bassGain = context.createGain();
+          bassGain.gain.setValueAtTime(0.3, now);
+          bassGain.gain.linearRampToValueAtTime(0.0, now + duration);
+
+          const airSource = context.createBufferSource();
+          airSource.buffer = getNoiseBuffer(context);
+
+          const bandPass = context.createBiquadFilter();
+          bandPass.type = "bandpass";
+          bandPass.frequency.setValueAtTime(900, now);
+          bandPass.Q.setValueAtTime(1.6, now);
+
+          const airGain = context.createGain();
+          airGain.gain.setValueAtTime(0.26, now);
+          airGain.gain.linearRampToValueAtTime(0.0, now + duration);
+
+          bassOsc.connect(bassGain).connect(context.destination);
+          airSource.connect(bandPass).connect(airGain).connect(context.destination);
+
+          bassOsc.start(now);
+          bassOsc.stop(now + duration);
+          airSource.start(now);
+          airSource.stop(now + duration);
+        });
+      },
+    };
+  })();
   window.addEventListener("keydown", (ev) => {
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "KeyW", "KeyA", "KeyS", "KeyD"].includes(ev.code)) {
       ev.preventDefault();
     }
+    audioSystem.resume(); // キー操作でオーディオコンテキストを解放
     keys.add(ev.code);
     if (!ev.repeat && ev.code === "KeyF") {
       missileRequest = true; // ミサイルは単発入力で発射要求
     }
   }, { passive: false });
   window.addEventListener("keyup", (ev) => keys.delete(ev.code));
+  window.addEventListener("pointerdown", () => audioSystem.resume(), { passive: true });
+  window.addEventListener("touchstart", () => audioSystem.resume(), { passive: true });
 
   // === ベクトル演算ユーティリティ ===
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -757,6 +878,7 @@
       { x: -1.6, y: -0.8, z: -6 },
       { x: 1.6, y: -0.8, z: -6 },
     ];
+    audioSystem.playLaserShot(); // レーザー発射音を再生
     muzzles.forEach((off) => {
       // 自機レーザーの発光パラメータを付与
       playerShots.push({
@@ -1442,6 +1564,7 @@
   }
 
   function spawnExplosion(x, y, z, scale = 1.0, duration = 0.7) {
+    audioSystem.playExplosion(scale); // 爆発規模に応じた効果音を再生
     const count = 18;
     const shards = [];
     for (let i = 0; i < count; i++) {
@@ -1885,6 +2008,7 @@
       damage: 60,
       hitRadius: 18,
     });
+    audioSystem.playWaveCannon(); // 波動砲専用の効果音を再生
     boss.waveCharge = 1;
     boss.shake = 1.6;
   }
