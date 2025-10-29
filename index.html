@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Wireframe City Shooter</title>
+<title>StarDogs</title>
 <style>
   :root {
     color-scheme: dark;
@@ -30,17 +30,103 @@
     width: 100vw;
     height: 100vh;
   }
+  #title-screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 50% 40%, rgba(0, 20, 60, 0.92), rgba(0, 4, 12, 0.95));
+    z-index: 20;
+    transition: opacity 0.5s ease;
+  }
+  #title-screen.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .title-card {
+    text-align: center;
+    padding: 40px 48px;
+    border-radius: 18px;
+    background: rgba(0, 10, 24, 0.72);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(0, 123, 255, 0.55);
+    max-width: 440px;
+    width: calc(100% - 48px);
+  }
+  .title-card h1 {
+    margin: 0 0 18px;
+    font-size: clamp(42px, 6vw, 68px);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #7fd3ff;
+    text-shadow: 0 0 18px rgba(0, 123, 255, 0.7);
+  }
+  .title-card p {
+    margin: 0 0 28px;
+    font-size: clamp(16px, 2.6vw, 20px);
+    letter-spacing: 0.08em;
+    color: #cbe7ff;
+    opacity: 0.82;
+  }
+  .title-actions {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .title-actions button,
+  .title-actions a {
+    padding: 12px 24px;
+    border-radius: 999px;
+    font-size: 15px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: none;
+    background: linear-gradient(135deg, #0a5cff, #009dff);
+    color: #f8fbff;
+    text-decoration: none;
+    box-shadow: 0 10px 24px rgba(0, 123, 255, 0.4);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .title-actions button:hover,
+  .title-actions a:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 30px rgba(0, 123, 255, 0.55);
+  }
+  .title-actions button:focus-visible,
+  .title-actions a:focus-visible {
+    outline: 2px solid rgba(0, 180, 255, 0.8);
+    outline-offset: 4px;
+  }
 </style>
 </head>
 <body>
 <canvas id="view" width="1280" height="720"></canvas>
 <div id="hud">CITY RUN / WIREFRAME MODE</div>
+<div id="title-screen">
+  <div class="title-card">
+    <h1>StarDogs</h1>
+    <p>Press Space / Click to launch</p>
+    <div class="title-actions">
+      <button id="start-button" type="button">Game Start</button>
+      <a id="tweet-button" href="#" target="_blank" rel="noopener noreferrer">Tweet #KGNINJA #StarDogs</a>
+    </div>
+  </div>
+</div>
 <script>
 (() => {
   "use strict";
   const canvas = document.getElementById("view");
   const ctx = canvas.getContext("2d", { alpha: false });
   const hudLabel = document.getElementById("hud");
+  const titleScreen = document.getElementById("title-screen");
+  const startButton = document.getElementById("start-button");
+  const tweetButton = document.getElementById("tweet-button");
+
+  // タイトル画面からツイート画面へ誘導するリンクを生成（ハッシュタグ固定）
+  tweetButton.href = `https://twitter.com/intent/tweet?text=${encodeURIComponent("StarDogsをプレイ中！ #KGNINJA #StarDogs")}`;
 
   // === 表示設定 ===
   const display = {
@@ -175,6 +261,12 @@
       ev.preventDefault();
     }
     audioSystem.resume(); // キー操作でオーディオコンテキストを解放
+
+    if (gamePhase === "title" && !ev.repeat && (ev.code === "Space" || ev.code === "Enter")) {
+      startFromTitle(); // タイトル画面からゲーム開始
+      return;
+    }
+
     keys.add(ev.code);
     if (!ev.repeat && ev.code === "KeyF") {
       missileRequest = true; // ミサイルは単発入力で発射要求
@@ -261,7 +353,7 @@
   let gameOverTime = 0;
 
   // === ゲームフェーズ管理 ===
-  let gamePhase = "stage0";
+  let gamePhase = "title";
   let phaseTime = 0;
   const stage0State = {
     startZ: 180,
@@ -2408,7 +2500,30 @@
     }
   }
 
+  function startFromTitle() {
+    if (gamePhase !== "title") return;
+    titleScreen.classList.add("hidden");
+    keys.clear(); // 誤入力を持ち越さないようにキー状態を初期化
+    initStage0Scene();
+  }
+
+  // ボタン操作でゲーム開始フローへ遷移
+  startButton.addEventListener("click", () => {
+    audioSystem.resume();
+    startFromTitle();
+  });
+
+  // 背景クリックでも即座にローンチシーケンスを開始
+  titleScreen.addEventListener("click", (ev) => {
+    if (ev.target === titleScreen) {
+      audioSystem.resume();
+      startFromTitle();
+    }
+  });
+
   initStage0Scene();
+  gamePhase = "title"; // 初期状態はタイトル画面で待機
+  phaseTime = 0;
   initCity();
 
   // === ウインドウリサイズ対応 ===
@@ -2615,6 +2730,10 @@
   function update(dt) {
     simTime += dt;
     player.invuln = Math.max(0, player.invuln - dt);
+    if (gamePhase === "title") {
+      phaseTime += dt;
+      return;
+    }
     if (gamePhase === "stage0") {
       phaseTime += dt;
       updateStage0(dt);
@@ -2887,7 +3006,11 @@
     const missileText = Number.isFinite(MISSILE_STOCK_MAX)
       ? `MISSILES ${missilesRemaining}/${MISSILE_STOCK_MAX}`
       : "MISSILES ∞"; // 無限ストックであることをHUDに表示
-    if (gamePhase === "stage0") {
+
+    if (gamePhase === "title") {
+      hudLabel.textContent = "STAR DOGS / PRESS START";
+    } else if (gamePhase === "stage0") {
+
       hudLabel.textContent = "LAUNCH BAY / PREP SEQUENCE";
     } else if (stageClear) {
       hudLabel.textContent = "MISSION COMPLETE";
