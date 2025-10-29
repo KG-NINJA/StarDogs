@@ -90,6 +90,7 @@
     stocks: 3,
     invuln: 0,
     hitRadius: 6,
+    visible: true, // ゲームオーバー時に自機を非表示にするためのフラグ
   };
 
   const camera = {
@@ -110,7 +111,9 @@
   const explosions = [];
   let shotCooldown = 0;
   let missileCooldown = 0;
-  const MISSILE_STOCK_MAX = 6;
+  const MISSILE_STOCK_MAX = Infinity; // ミサイルを無制限に扱うための疑似上限値
+  const MAX_CONCURRENT_PLAYER_MISSILES = 4; // 同時発射可能な自機ミサイル数の上限
+  const MISSILE_FIRE_INTERVAL = 0.4; // 連射間隔を短縮して同時発射を支援
   let missilesRemaining = MISSILE_STOCK_MAX;
   let missileRequest = false;
   const boss = {
@@ -807,11 +810,15 @@
   }
 
   function spawnPlayerMissile() {
-    if (missileCooldown > 0 || missilesRemaining <= 0) return;
+    if (missileCooldown > 0) return;
+    if (playerMissiles.length >= MAX_CONCURRENT_PLAYER_MISSILES) {
+      // 画面上のミサイル数が上限に達している場合は追加発射しない
+      return;
+    }
     const target = acquireMissileTarget();
     if (!target) return;
     missilesRemaining -= 1;
-    missileCooldown = 2.2;
+    missileCooldown = MISSILE_FIRE_INTERVAL;
     const spawn = { x: player.pos.x, y: player.pos.y - 1.5, z: player.pos.z - 8 };
     playerMissiles.push({
       pos: { ...spawn },
@@ -1409,11 +1416,12 @@
     phaseTime = 0;
     stageClear = false;
     stage1Clear = false;
-    missilesRemaining = 0;
+    missilesRemaining = MISSILE_STOCK_MAX;
     player.stocks = 0;
     player.hp = 0;
     player.shield = 0;
     player.invuln = 2.0;
+    player.visible = false; // 自機を非表示にしてゲームオーバー演出を明確化
     enemyShots.length = 0;
     playerShots.length = 0;
     playerMissiles.length = 0;
@@ -1470,6 +1478,7 @@
       missilesRemaining = MISSILE_STOCK_MAX;
       player.stocks = player.maxStocks;
     }
+    player.visible = true; // 復活時には自機を再表示する
   }
 
   function respawnPlayer() {
@@ -2579,7 +2588,9 @@
     const shieldText = `SHIELD ${Math.max(0, Math.round(player.shield))}`;
     const stockText = `STOCK ${player.stocks}/${player.maxStocks}`;
     const vitalsText = `${hpText} / ${shieldText} / ${stockText}`;
-    const missileText = `MISSILES ${missilesRemaining}/${MISSILE_STOCK_MAX}`;
+    const missileText = Number.isFinite(MISSILE_STOCK_MAX)
+      ? `MISSILES ${missilesRemaining}/${MISSILE_STOCK_MAX}`
+      : "MISSILES ∞"; // 無限ストックであることをHUDに表示
     if (gamePhase === "stage0") {
       hudLabel.textContent = "LAUNCH BAY / PREP SEQUENCE";
     } else if (stageClear) {
@@ -2678,12 +2689,12 @@
     drawPlayerStatusOverlay(hpText, shieldText, stockText);
 
     // 自機描画
-    if (gamePhase === "stage0") {
+    if (player.visible && gamePhase === "stage0") {
       drawStage0Thruster();
     }
     const nowFrame = performance.now();
     const invulnFlash = player.invuln > 0 && Math.floor(nowFrame * 0.02) % 2 === 0;
-    if (!invulnFlash || gamePhase === "stage0") {
+    if (player.visible && (!invulnFlash || gamePhase === "stage0")) {
       drawEdges(getPlayerEdges(), "rgba(0, 188, 255, 0.95)", 2.4, "rgba(0, 188, 255, 0.9)");
     }
 
