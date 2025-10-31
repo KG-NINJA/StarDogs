@@ -25,6 +25,68 @@
     opacity: 0.85;
     pointer-events: none;
   }
+  #soundMode {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    display: flex;
+    gap: 8px;
+    z-index: 100;
+  }
+  .mode-btn {
+    padding: 8px 16px;
+    background: rgba(0, 50, 120, 0.8);
+    border: 1px solid rgba(100, 200, 255, 0.5);
+    color: #cbe7ff;
+    font-size: 12px;
+    font-family: "Helvetica Neue", system-ui, sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .mode-btn:hover {
+    background: rgba(0, 80, 180, 0.9);
+    border-color: rgba(150, 220, 255, 0.7);
+  }
+  .mode-btn.active {
+    background: rgba(0, 120, 255, 0.9);
+    border-color: rgba(200, 240, 255, 0.8);
+    box-shadow: 0 0 8px rgba(100, 200, 255, 0.5);
+  }
+  #soundTest {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 20, 60, 0.9);
+    border: 1px solid rgba(100, 200, 255, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+    display: none;
+    gap: 12px;
+    z-index: 100;
+  }
+  .track-btn {
+    padding: 10px 20px;
+    background: rgba(0, 60, 140, 0.8);
+    border: 1px solid rgba(80, 180, 255, 0.4);
+    color: #cbe7ff;
+    font-size: 13px;
+    font-family: "Helvetica Neue", system-ui, sans-serif;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-radius: 4px;
+  }
+  .track-btn:hover {
+    background: rgba(0, 90, 180, 0.9);
+    border-color: rgba(120, 200, 255, 0.6);
+  }
+  .track-btn.playing {
+    background: rgba(0, 140, 255, 0.9);
+    border-color: rgba(180, 240, 255, 0.8);
+    box-shadow: 0 0 6px rgba(100, 200, 255, 0.4);
+  }
   canvas {
     display: block;
     width: 100vw;
@@ -35,6 +97,18 @@
 <body>
 <canvas id="view" width="1280" height="720"></canvas>
 <div id="hud">CITY RUN / WIREFRAME MODE</div>
+<div id="soundMode">
+  <button class="mode-btn active" id="gameMode">Game</button>
+  <button class="mode-btn" id="soundModeBtn">Sound Test</button>
+</div>
+<div id="soundTest">
+  <button class="track-btn" data-track="stage0">Stage 0 - Launch</button>
+  <button class="track-btn" data-track="stage1">Stage 1 - Final Takeoff</button>
+  <button class="track-btn" data-track="stage2">Stage 2 - Space Opera</button>
+  <button class="track-btn" data-track="stage3">Stage 3 - Boss Battle</button>
+  <button class="track-btn" data-track="clear">Clear Jingle</button>
+  <button class="track-btn" data-track="ascent">Space Ascent SFX</button>
+</div>
 <script>
 (() => {
   "use strict";
@@ -52,137 +126,1555 @@
 
   // === 入力状態 ===
   const keys = new Set();
-
-  // === オーディオシステム構築（ユーザー操作後に初期化） ===
-  const audioSystem = (() => {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    let ctx = null;
-    let noiseBuffer = null;
-
-    // 乱数ノイズのバッファを生成して爆発音の素材とする
-    const getNoiseBuffer = (context) => {
-      if (noiseBuffer) return noiseBuffer;
-      const duration = 1.2;
-      const buffer = context.createBuffer(1, Math.floor(context.sampleRate * duration), context.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < data.length; i++) {
-        data[i] = Math.random() * 2 - 1;
-      }
-      noiseBuffer = buffer;
-      return noiseBuffer;
-    };
-
-    // コンテキストを確保し、必要に応じて再開する
-    const withContext = (fn) => {
-      if (!AudioContextClass) return;
-      if (!ctx) {
-        ctx = new AudioContextClass();
-      }
-      if (ctx.state === "suspended") {
-        ctx.resume();
-      }
-      fn(ctx);
-    };
-
-    return {
-      resume() {
-        if (!AudioContextClass) return;
-        if (!ctx) {
-          ctx = new AudioContextClass();
-        }
-        if (ctx.state === "suspended") {
-          ctx.resume();
-        }
-      },
-      playLaserShot() {
-        withContext((context) => {
-          const now = context.currentTime;
-          const gain = context.createGain();
-          gain.gain.setValueAtTime(0.22, now);
-          gain.gain.exponentialRampToValueAtTime(0.002, now + 0.16);
-
-          const osc = context.createOscillator();
-          osc.type = "sawtooth";
-          osc.frequency.setValueAtTime(880, now);
-          osc.frequency.exponentialRampToValueAtTime(1660, now + 0.12);
-
-          osc.connect(gain).connect(context.destination);
-          osc.start(now);
-          osc.stop(now + 0.18);
-        });
-      },
-      playExplosion(intensity = 1) {
-        withContext((context) => {
-          const now = context.currentTime;
-          const source = context.createBufferSource();
-          source.buffer = getNoiseBuffer(context);
-
-          const filter = context.createBiquadFilter();
-          filter.type = "lowpass";
-          const cutoff = 600 + Math.min(intensity, 4) * 420;
-          filter.frequency.setValueAtTime(cutoff, now);
-          filter.Q.setValueAtTime(0.8, now);
-
-          const gain = context.createGain();
-          const startGain = 0.32 * Math.min(intensity, 3.5);
-          gain.gain.setValueAtTime(startGain, now);
-          gain.gain.exponentialRampToValueAtTime(0.002, now + 0.9);
-
-          source.connect(filter).connect(gain).connect(context.destination);
-          source.start(now);
-          source.stop(now + 1.0);
-        });
-      },
-      playWaveCannon() {
-        withContext((context) => {
-          const now = context.currentTime;
-          const duration = 1.8;
-
-          const bassOsc = context.createOscillator();
-          bassOsc.type = "square";
-          bassOsc.frequency.setValueAtTime(110, now);
-          bassOsc.frequency.exponentialRampToValueAtTime(260, now + 0.9);
-
-          const bassGain = context.createGain();
-          bassGain.gain.setValueAtTime(0.3, now);
-          bassGain.gain.linearRampToValueAtTime(0.0, now + duration);
-
-          const airSource = context.createBufferSource();
-          airSource.buffer = getNoiseBuffer(context);
-
-          const bandPass = context.createBiquadFilter();
-          bandPass.type = "bandpass";
-          bandPass.frequency.setValueAtTime(900, now);
-          bandPass.Q.setValueAtTime(1.6, now);
-
-          const airGain = context.createGain();
-          airGain.gain.setValueAtTime(0.26, now);
-          airGain.gain.linearRampToValueAtTime(0.0, now + duration);
-
-          bassOsc.connect(bassGain).connect(context.destination);
-          airSource.connect(bandPass).connect(airGain).connect(context.destination);
-
-          bassOsc.start(now);
-          bassOsc.stop(now + duration);
-          airSource.start(now);
-          airSource.stop(now + duration);
-        });
-      },
-    };
-  })();
   window.addEventListener("keydown", (ev) => {
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "KeyW", "KeyA", "KeyS", "KeyD"].includes(ev.code)) {
       ev.preventDefault();
     }
-    audioSystem.resume(); // キー操作でオーディオコンテキストを解放
     keys.add(ev.code);
     if (!ev.repeat && ev.code === "KeyF") {
       missileRequest = true; // ミサイルは単発入力で発射要求
     }
   }, { passive: false });
   window.addEventListener("keyup", (ev) => keys.delete(ev.code));
-  window.addEventListener("pointerdown", () => audioSystem.resume(), { passive: true });
-  window.addEventListener("touchstart", () => audioSystem.resume(), { passive: true });
+
+  // === オーディオ制御 ===
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  let audioController = null;
+  let stage0JinglePending = false;
+  let stage0JinglePlayed = false;
+  let stage0JingleStartTime = 0;
+  let stage1MusicPending = false;
+  let stage1MusicActive = false;
+  let stage2MusicPending = false;
+  let stage2MusicActive = false;
+  let stage3MusicPending = false;
+  let stage3MusicActive = false;
+  let cityFanfarePending = false;
+
+  function ensureAudioController() {
+    if (audioController || !AudioContextClass) {
+      return audioController;
+    }
+    audioController = createAudioController();
+    return audioController;
+  }
+
+  function queueStage0Jingle() {
+    // ステージ0開幕用ジングル再生の準備と即時試行
+    stopStageMusic();
+    stage0JinglePending = true;
+    stage0JinglePlayed = false;
+    stage0JingleStartTime = 0;
+    tryPlayStage0Jingle();
+    setTimeout(() => {
+      if (stage0JinglePending && !stage0JinglePlayed) {
+        tryPlayStage0Jingle();
+      }
+    }, 140);
+    resumeAudioContext();
+  }
+
+  async function resumeAudioContext() {
+    // ユーザー操作時にサスペンド解除してジングル発火を保証
+    const controller = ensureAudioController();
+    if (!controller) return;
+    try {
+      if (controller.context.state === "suspended") {
+        await controller.context.resume();
+      }
+      tryPlayStage0Jingle();
+      tryPlayStage1Music();
+      tryPlayStage2Music();
+      tryPlayStage3Music();
+      tryPlayCityExitFanfare();
+    } catch (err) {
+      console.warn("Audio resume failed", err);
+    }
+  }
+
+  function tryPlayStage0Jingle() {
+    // コンテキストが稼働中なら即座にジングル開始
+    if (!stage0JinglePending || stage0JinglePlayed) return;
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") return;
+    try {
+      controller.playStage0Jingle();
+      stage0JinglePending = false;
+      stage0JinglePlayed = true;
+      stage0JingleStartTime = controller.context.currentTime;
+    } catch (err) {
+      console.warn("Stage0 jingle play failed", err);
+      stage0JinglePending = true;
+      stage0JinglePlayed = false;
+    }
+  }
+
+  const audioGestureEvents = ["pointerdown", "touchstart", "keydown"];
+  for (const type of audioGestureEvents) {
+    window.addEventListener(type, resumeAudioContext, { passive: true });
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      resumeAudioContext();
+    }
+  });
+
+  function handleAudioStateChange() {
+    if (!audioController) return;
+    if (audioController.context.state === "running") {
+      tryPlayStage0Jingle();
+      tryPlayStage1Music();
+      tryPlayStage2Music();
+      tryPlayStage3Music();
+      tryPlayCityExitFanfare();
+    }
+  }
+
+  function queueStage1Music() {
+    // ステージ1突入時のアフターバーナー調BGMを保留して試行
+    stage1MusicPending = true;
+    stage1MusicActive = false;
+    tryPlayStage1Music();
+  }
+
+  function tryPlayStage1Music() {
+    // オーディオコンテキストが稼働したら即座に再生開始
+    if (!stage1MusicPending || stage1MusicActive) return;
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") return;
+    controller.playStage1Theme();
+    stage1MusicPending = false;
+    stage1MusicActive = true;
+  }
+
+  function queueStage2Music() {
+    // 宇宙ステージ用オペラ調テーマの再生要求をセット
+    stage2MusicPending = true;
+    stage2MusicActive = false;
+    tryPlayStage2Music();
+  }
+
+  function tryPlayStage2Music() {
+    // オーディオが動作中なら宇宙テーマを即再生
+    if (!stage2MusicPending || stage2MusicActive) return;
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") return;
+    controller.playStage2Theme();
+    stage2MusicPending = false;
+    stage2MusicActive = true;
+  }
+
+  function queueStage3Music() {
+    // ボス戦テーマの再生要求をセット
+    if (stage3MusicPending || stage3MusicActive) return;
+    if (stage1MusicActive || stage2MusicActive) {
+      stopStageMusic();
+    }
+    stage3MusicPending = true;
+    stage3MusicActive = false;
+    tryPlayStage3Music();
+  }
+
+  function tryPlayStage3Music() {
+    // オーディオが稼働していればボステーマを再生
+    if (!stage3MusicPending || stage3MusicActive) return;
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") return;
+    controller.playStage3Theme();
+    stage3MusicPending = false;
+    stage3MusicActive = true;
+  }
+
+  function queueCityExitFanfare() {
+    // ファンファーレ再生の保留をセット
+    cityFanfarePending = true;
+    tryPlayCityExitFanfare();
+  }
+
+  function tryPlayCityExitFanfare() {
+    // コンテキスト稼働中ならファンファーレを即再生
+    if (!cityFanfarePending) return;
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") return;
+    controller.playCityExitFanfare();
+    cityFanfarePending = false;
+  }
+
+  function stopStageMusic() {
+    // ステージBGMを停止し、待機フラグも解除
+    stage1MusicPending = false;
+    stage1MusicActive = false;
+    stage2MusicPending = false;
+    stage2MusicActive = false;
+    stage3MusicPending = false;
+    stage3MusicActive = false;
+    cityFanfarePending = false;
+    if (!audioController) return;
+    audioController.stopStageMusic();
+  }
+
+  function triggerLaserSfx(kind = "player") {
+    // レーザーSE再生をラップ（サスペンド中は再開要求）
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") {
+      resumeAudioContext();
+      return;
+    }
+    controller.playLaserSfx(kind);
+  }
+
+  function triggerExplosionSfx(intensity = 1) {
+    // 爆発SE再生ラッパー（スケールに応じて音量補正）
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") {
+      resumeAudioContext();
+      return;
+    }
+    controller.playExplosionSfx(intensity);
+  }
+
+  function triggerSpaceAscentSfx(progress = 0) {
+    const controller = ensureAudioController();
+    if (!controller) return;
+    if (controller.context.state !== "running") {
+      resumeAudioContext();
+      return;
+    }
+    controller.playSpaceAscentSfx(progress);
+  }
+
+  function triggerCityExitFanfare() {
+    // ファンファーレ再生を試行（未再生なら待機）
+    queueCityExitFanfare();
+  }
+
+  function createAudioController() {
+    // YM2612風FMとSN76489風PSGを束ねるWebAudioコンテナ
+    if (!AudioContextClass) return null;
+    const context = new AudioContextClass({ latencyHint: "interactive" });
+    const masterGain = context.createGain();
+    masterGain.gain.value = 0.55;
+    const compressor = context.createDynamicsCompressor();
+    // FMピークの音割れを抑えるために軽いダイナミクス処理を挿入
+    compressor.threshold.setValueAtTime(-22, context.currentTime);
+    compressor.knee.setValueAtTime(18, context.currentTime);
+    compressor.ratio.setValueAtTime(4, context.currentTime);
+    compressor.attack.setValueAtTime(0.004, context.currentTime);
+    compressor.release.setValueAtTime(0.28, context.currentTime);
+    masterGain.connect(compressor);
+    compressor.connect(context.destination);
+
+    context.addEventListener("statechange", handleAudioStateChange);
+
+    const fmBus = context.createGain();
+    fmBus.gain.value = 0.88;
+    
+    // エレキギター用ディストーションエフェクト
+    const distortion = context.createWaveShaper();
+    distortion.curve = makeDistortionCurve(18);
+    distortion.oversample = '2x';
+    
+    const distortionGain = context.createGain();
+    distortionGain.gain.value = 0.28;
+    
+    const distortionMix = context.createGain();
+    distortionMix.gain.value = 0.22;
+    
+    // ディストーション処理
+    fmBus.connect(distortion);
+    distortion.connect(distortionGain);
+    distortionGain.connect(distortionMix);
+    distortionMix.connect(masterGain);
+    
+    // クリーン信号も混ぜる
+    const cleanGain = context.createGain();
+    cleanGain.gain.value = 0.82;
+    fmBus.connect(cleanGain);
+    cleanGain.connect(masterGain);
+
+    function makeDistortionCurve(amount) {
+      const samples = 44100;
+      const curve = new Float32Array(samples);
+      const deg = Math.PI / 180;
+      for (let i = 0; i < samples; i++) {
+        const x = (i * 2) / samples - 1;
+        curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x));
+      }
+      return curve;
+    }
+
+    const psgBus = context.createGain();
+    psgBus.gain.value = 0.26;
+    psgBus.connect(masterGain);
+
+    const sfxBus = context.createGain();
+    sfxBus.gain.value = 0.6;
+    sfxBus.connect(masterGain);
+
+    const noiseBuffer = createNoiseBuffer();
+    const activeNodes = new Set();
+    const musicTimers = new Set();
+    let musicMode = null;
+
+    function track(node) {
+      if (!node) return node;
+      activeNodes.add(node);
+      const dispose = () => activeNodes.delete(node);
+      if (typeof node.addEventListener === "function") {
+        node.addEventListener("ended", dispose, { once: true });
+      } else if ("onended" in node) {
+        const prev = node.onended;
+        node.onended = (...args) => {
+          if (typeof prev === "function") prev.apply(node, args);
+          dispose();
+        };
+      }
+      return node;
+    }
+
+    function stopActiveNodes() {
+      const now = context.currentTime;
+      for (const node of activeNodes) {
+        try {
+          if (node.stop) {
+            node.stop(now + 0.01);
+          }
+        } catch (err) {
+          console.warn("stop failed", err);
+        }
+      }
+      activeNodes.clear();
+    }
+
+    function scheduleMusicTimer(callback, delayMs) {
+      const id = setTimeout(() => {
+        musicTimers.delete(id);
+        callback();
+      }, delayMs);
+      musicTimers.add(id);
+      return id;
+    }
+
+    function clearMusicTimers() {
+      for (const id of musicTimers) {
+        clearTimeout(id);
+      }
+      musicTimers.clear();
+    }
+
+    function stopStageMusicInternal() {
+      clearMusicTimers();
+      musicMode = null;
+      stopActiveNodes();
+    }
+
+    function createNoiseBuffer() {
+      const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      return buffer;
+    }
+
+    function applyEnv(param, start, peak, attack, decay, sustainLevel, release, duration) {
+      // ADSRライクなエンベロープをAudioParamに適用
+      const epsilon = 0.0001;
+      const sustainTime = Math.max(0, duration - attack - decay - release);
+      param.cancelScheduledValues(start);
+      param.setValueAtTime(epsilon, start);
+      param.linearRampToValueAtTime(peak, start + attack);
+      param.linearRampToValueAtTime(peak * sustainLevel, start + attack + decay);
+      const sustainEnd = start + attack + decay + sustainTime;
+      param.setValueAtTime(peak * sustainLevel, sustainEnd);
+      param.linearRampToValueAtTime(epsilon, sustainEnd + release);
+    }
+
+    function scheduleFmVoice(start, baseFreq, duration, velocity, preset) {
+      // 4オペレータのFMボイスを生成（YM2612アルゴリズムのチェーン近似）
+      const stopTime = start + duration + preset.releaseTail;
+      const carrier = context.createOscillator();
+      carrier.type = "sine";
+      carrier.frequency.setValueAtTime(baseFreq * preset.ratios[0], start);
+      const carrierGain = context.createGain();
+      carrierGain.gain.setValueAtTime(0, start);
+      carrier.connect(carrierGain);
+      carrierGain.connect(fmBus);
+
+      const opGains = [];
+      let previousOp = carrier;
+      for (let i = 1; i < 4; i++) {
+        const osc = context.createOscillator();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(baseFreq * preset.ratios[i], start);
+        const gain = context.createGain();
+        gain.gain.setValueAtTime(0, start);
+        osc.connect(gain);
+        const target = preset.algorithm === "parallel" && i >= 3 ? carrier.frequency : previousOp.frequency;
+        gain.connect(target);
+        applyEnv(gain.gain, start, preset.modLevels[i - 1] * velocity, preset.attack[i], preset.decay[i], preset.sustain[i], preset.release[i], duration);
+        osc.start(start);
+        osc.stop(stopTime);
+        track(osc);
+        opGains.push(gain);
+        previousOp = osc;
+      }
+
+      applyEnv(carrierGain.gain, start, preset.carrierLevel * velocity, preset.attack[0], preset.decay[0], preset.sustain[0], preset.release[0], duration);
+      carrier.start(start);
+      carrier.stop(stopTime);
+      track(carrier);
+      opGains.forEach(track);
+      track(carrierGain);
+    }
+
+    function schedulePsgTone(start, freq, duration, level) {
+      // SN76489のトーンチャンネル相当の矩形波をスケジュール
+      const stopTime = start + duration + 0.12;
+      const osc = context.createOscillator();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(freq, start);
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0, start);
+      osc.connect(gain);
+      gain.connect(psgBus);
+      applyEnv(gain.gain, start, level, 0.008, 0.08, 0.5, 0.1, duration);
+      osc.start(start);
+      osc.stop(stopTime);
+      track(osc);
+      track(gain);
+    }
+
+    function schedulePsgNoise(start, duration, level) {
+      // PSGノイズチャンネルの疑似パルスを生成
+      const stopTime = start + duration;
+      const source = context.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = true;
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0, start);
+      source.connect(gain);
+      gain.connect(psgBus);
+      applyEnv(gain.gain, start, level, 0.001, 0.05, 0.0, 0.08, duration);
+      source.start(start);
+      source.stop(stopTime);
+      track(source);
+      track(gain);
+    }
+
+    function scheduleKickDrum(start, velocity = 1.0) {
+      // キックドラム音（低域の重い音）
+      const osc = context.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(60, start);
+      osc.frequency.exponentialRampToValueAtTime(30, start + 0.15);
+      
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.8 * velocity, start + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
+      
+      osc.connect(gain);
+      gain.connect(sfxBus);
+      osc.start(start);
+      osc.stop(start + 0.3);
+      track(osc);
+      track(gain);
+    }
+
+    function scheduleSnareDrum(start, velocity = 1.0) {
+      // スネアドラム音（ノイズ+トーン）
+      const tone = context.createOscillator();
+      tone.type = "triangle";
+      tone.frequency.setValueAtTime(200, start);
+      
+      const noise = context.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+      
+      const toneGain = context.createGain();
+      toneGain.gain.setValueAtTime(0.4 * velocity, start);
+      toneGain.gain.exponentialRampToValueAtTime(0.001, start + 0.12);
+      
+      const noiseGain = context.createGain();
+      noiseGain.gain.setValueAtTime(0.6 * velocity, start);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, start + 0.08);
+      
+      const filter = context.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(3000, start);
+      
+      tone.connect(toneGain);
+      toneGain.connect(sfxBus);
+      
+      noise.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(sfxBus);
+      
+      tone.start(start);
+      tone.stop(start + 0.12);
+      noise.start(start);
+      noise.stop(start + 0.08);
+      
+      track(tone);
+      track(toneGain);
+      track(noise);
+      track(filter);
+      track(noiseGain);
+    }
+
+    function scheduleHiHat(start, velocity = 1.0, duration = 0.05) {
+      // ハイハット音（金属的な高域ノイズ）
+      const noise = context.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+      
+      const filter = context.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(7000, start);
+      filter.Q.setValueAtTime(2.0, start);
+      
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.3 * velocity, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+      
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(sfxBus);
+      
+      noise.start(start);
+      noise.stop(start + duration);
+      
+      track(noise);
+      track(filter);
+      track(gain);
+    }
+
+    function scheduleCrashCymbal(start, velocity = 1.0) {
+      // クラッシュシンバル音
+      const noise = context.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+      
+      const filter = context.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(5000, start);
+      filter.Q.setValueAtTime(1.5, start);
+      
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.7 * velocity, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 1.5);
+      
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(sfxBus);
+      
+      noise.start(start);
+      noise.stop(start + 1.5);
+      
+      track(noise);
+      track(filter);
+      track(gain);
+    }
+
+    function scheduleOrchestralHit(start, velocity = 1.0) {
+      // オーケストラヒット（広がりのある打楽器音）
+      const osc1 = context.createOscillator();
+      const osc2 = context.createOscillator();
+      const osc3 = context.createOscillator();
+      
+      osc1.type = "sawtooth";
+      osc2.type = "square"; 
+      osc3.type = "triangle";
+      
+      osc1.frequency.setValueAtTime(80, start);
+      osc2.frequency.setValueAtTime(120, start);
+      osc3.frequency.setValueAtTime(160, start);
+      
+      const noise = context.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+      
+      const filter = context.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(2000, start);
+      filter.frequency.exponentialRampToValueAtTime(8000, start + 0.3);
+      
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(1.0 * velocity, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 2.0);
+      
+      osc1.connect(gain);
+      osc2.connect(gain);
+      osc3.connect(gain);
+      noise.connect(filter);
+      filter.connect(gain);
+      
+      gain.connect(sfxBus);
+      
+      osc1.start(start);
+      osc2.start(start);
+      osc3.start(start);
+      noise.start(start);
+      
+      osc1.stop(start + 2.0);
+      osc2.stop(start + 2.0);
+      osc3.stop(start + 2.0);
+      noise.stop(start + 2.0);
+      
+      track(osc1);
+      track(osc2);
+      track(osc3);
+      track(noise);
+      track(filter);
+      track(gain);
+    }
+
+    const fmPreset = {
+      // エレキギター風パワーコード設定（ノイズ抑制版）
+      ratios: [1, 1.99, 2.98, 0.5],
+      modLevels: [65, 48, 30],
+      carrierLevel: 0.95,
+      algorithm: "chain",
+      attack: [0.003, 0.005, 0.008, 0.01],
+      decay: [0.12, 0.18, 0.25, 0.3],
+      sustain: [0.65, 0.45, 0.25, 0.15],
+      release: [0.18, 0.15, 0.12, 0.1],
+      releaseTail: 0.25,
+    };
+
+    const fmLead = {
+      // エレキリードギター設定（歪みと共振を強化、ノイズ抑制版）
+      ratios: [1, 2.01, 3.02, 0.99],
+      modLevels: [60, 42, 25],
+      carrierLevel: 0.88,
+      algorithm: "chain",
+      attack: [0.002, 0.004, 0.006, 0.008],
+      decay: [0.08, 0.15, 0.22, 0.28],
+      sustain: [0.55, 0.35, 0.18, 0.12],
+      release: [0.22, 0.18, 0.15, 0.12],
+      releaseTail: 0.3,
+    };
+
+    const psgLevels = {
+      // PSG各チャンネルの相対音量
+      chord: 0.14,
+      arp: 0.09,
+      hit: 0.18,
+    };
+
+    const NOTE_OFFSET_MAP = {
+      C: -9,
+      "C#": -8,
+      Db: -8,
+      D: -7,
+      "D#": -6,
+      Eb: -6,
+      E: -5,
+      F: -4,
+      "F#": -3,
+      Gb: -3,
+      G: -2,
+      "G#": -1,
+      Ab: -1,
+      A: 0,
+      "A#": 1,
+      Bb: 1,
+      B: 2,
+    };
+
+    const DURATION_SYMBOL_MAP = {
+      w: 4,
+      h: 2,
+      q: 1,
+      e: 0.5,
+      s: 0.25,
+    };
+
+    // 人間可読な音名を周波数へ変換するユーティリティ
+    function noteNameToFrequency(noteName) {
+      const trimmed = noteName.trim();
+      if (!trimmed || trimmed.toUpperCase() === "R") {
+        return null;
+      }
+      const match = /^([A-Ga-g])([#b]?)(-?\d)([+-]\d+)?$/.exec(trimmed);
+      if (!match) {
+        throw new Error(`Unsupported note format: ${noteName}`);
+      }
+      const letter = match[1].toUpperCase();
+      const accidental = match[2] || "";
+      const octave = Number(match[3]);
+      const transpose = match[4] ? Number(match[4]) : 0;
+      const symbol = `${letter}${accidental}`;
+      const semitone = NOTE_OFFSET_MAP[symbol];
+      if (semitone === undefined) {
+        throw new Error(`Unknown note symbol: ${symbol}`);
+      }
+      const midi = (octave - 4) * 12 + semitone + transpose;
+      return 440 * Math.pow(2, midi / 12);
+    }
+
+    // 音価記号を拍数へ変換するユーティリティ
+    function durationSymbolToBeats(symbol) {
+      if (!symbol) return 1;
+      let base = symbol;
+      let dots = 0;
+      while (base.endsWith(".")) {
+        base = base.slice(0, -1);
+        dots += 1;
+      }
+      const primitive = DURATION_SYMBOL_MAP[base];
+      if (!primitive) {
+        throw new Error(`Unsupported duration symbol: ${symbol}`);
+      }
+      let value = primitive;
+      for (let i = 0; i < dots; i++) {
+        value += primitive / Math.pow(2, i + 1);
+      }
+      return value;
+    }
+
+    // 楽譜エントリをスケジューラへ展開する共通関数
+    function renderScore(entries, beat, baseTime, options) {
+      const {
+        defaultGain = 1,
+        preset,
+        schedule,
+      } = options;
+      for (const entry of entries) {
+        const entryOffsetBeats = entry.offsetBeats ?? 0;
+        const lengthBeats = entry.lengthBeats ?? durationSymbolToBeats(entry.length || "q");
+        const startTime = baseTime + entryOffsetBeats * beat;
+        const duration = lengthBeats * beat;
+        if (entry.notes.trim().toUpperCase() === "R") {
+          continue;
+        }
+        const tokens = entry.notes.split(/[,\s]+/).filter(Boolean);
+        for (const token of tokens) {
+          const freq = noteNameToFrequency(token);
+          if (freq === null) continue;
+          const gain = entry.gain ?? defaultGain;
+          schedule({
+            startTime,
+            duration,
+            frequency: freq,
+            gain,
+            preset,
+            entry,
+          });
+        }
+      }
+    }
+
+    // ドラム（ノイズ）用のパターン記述を解釈するユーティリティ
+    function renderDrumPattern(pattern, beat, baseTime, options) {
+      const {
+        stepsPerBeat,
+        noiseGain,
+        accentGainMultiplier = 1.5,
+        hitSeconds,
+      } = options;
+      const compact = pattern.replace(/\s+/g, "");
+      const stepDuration = beat / stepsPerBeat;
+      for (let i = 0; i < compact.length; i++) {
+        const ch = compact[i];
+        if (ch === "x" || ch === "X") {
+          const start = baseTime + i * stepDuration;
+          const gain = ch === "X" ? noiseGain * accentGainMultiplier : noiseGain;
+          const duration = hitSeconds ?? stepDuration * 0.6;
+          schedulePsgNoise(start, duration, gain);
+        }
+      }
+    }
+
+    function renderEnhancedDrumPattern(pattern, beat, baseTime, options = {}) {
+      const {
+        stepsPerBeat = 2,
+        velocity = 1.0,
+      } = options;
+      const compact = pattern.replace(/\s+/g, "");
+      const stepDuration = beat / stepsPerBeat;
+      
+      for (let i = 0; i < compact.length; i++) {
+        const ch = compact[i];
+        if (ch !== '-' && ch !== '|') {
+          const start = baseTime + i * stepDuration;
+          const isAccent = ch === ch.toUpperCase();
+          const vel = isAccent ? velocity * 1.3 : velocity;
+          
+          switch(ch.toLowerCase()) {
+            case 'k': // Kick
+              scheduleKickDrum(start, vel);
+              break;
+            case 's': // Snare
+              scheduleSnareDrum(start, vel);
+              break;
+            case 'h': // Hi-hat
+              scheduleHiHat(start, vel, 0.05);
+              break;
+            case 'c': // Crash cymbal
+              scheduleCrashCymbal(start, vel);
+              break;
+            case 'o': // Orchestral hit
+              scheduleOrchestralHit(start, vel);
+              break;
+            case 'x': // Legacy noise
+              schedulePsgNoise(start, stepDuration * 0.6, vel * 0.5);
+              break;
+          }
+        }
+      }
+    }
+
+    // === ステージ1/2/3/4の楽譜データ（音名ベースで編集しやすい形） ===
+    // Final Takeoff風離陸シーン
+    const STAGE1_BEAT = 0.45;
+    const STAGE1_BLOCK_BEATS = 8;
+    const STAGE1_CHORD_ENTRIES = [
+      { offsetBeats: 0, notes: "C4 E4 G4 C5", length: "h" },
+      { offsetBeats: 2, notes: "F4 A4 C5 F5", length: "h" },
+      { offsetBeats: 4, notes: "G4 B4 D5 G5", length: "h" },
+      { offsetBeats: 6, notes: "C5 E5 G5 C6", length: "h" },
+    ];
+    const STAGE1_LEAD_ENTRIES = [
+      { offsetBeats: 0, notes: "E5", lengthBeats: 0.25 },
+      { offsetBeats: 0.25, notes: "G5", lengthBeats: 0.25 },
+      { offsetBeats: 0.5, notes: "A5", lengthBeats: 0.25 },
+      { offsetBeats: 0.75, notes: "G5", lengthBeats: 0.25 },
+      { offsetBeats: 1, notes: "C6", lengthBeats: 0.5 },
+      { offsetBeats: 1.5, notes: "B5", lengthBeats: 0.25 },
+      { offsetBeats: 1.75, notes: "A5", lengthBeats: 0.25 },
+      { offsetBeats: 2, notes: "G5", lengthBeats: 0.5 },
+      { offsetBeats: 2.5, notes: "F5", lengthBeats: 0.25 },
+      { offsetBeats: 2.75, notes: "E5", lengthBeats: 0.25 },
+      { offsetBeats: 3, notes: "G5", lengthBeats: 0.5 },
+      { offsetBeats: 3.5, notes: "E5", lengthBeats: 0.5 },
+      { offsetBeats: 4, notes: "D5", lengthBeats: 0.25 },
+      { offsetBeats: 4.25, notes: "F5", lengthBeats: 0.25 },
+      { offsetBeats: 4.5, notes: "G5", lengthBeats: 0.5 },
+      { offsetBeats: 5, notes: "B5", lengthBeats: 0.25 },
+      { offsetBeats: 5.25, notes: "C6", lengthBeats: 0.25 },
+      { offsetBeats: 5.5, notes: "A5", lengthBeats: 0.5 },
+      { offsetBeats: 6, notes: "G5", lengthBeats: 0.25 },
+      { offsetBeats: 6.25, notes: "F5", lengthBeats: 0.25 },
+      { offsetBeats: 6.5, notes: "E5", lengthBeats: 0.25 },
+      { offsetBeats: 6.75, notes: "D5", lengthBeats: 0.25 },
+      { offsetBeats: 7, notes: "E5", lengthBeats: 0.5 },
+      { offsetBeats: 7.5, notes: "C5", lengthBeats: 0.5 },
+    ];
+    const STAGE1_BASS_ENTRIES = [
+      { offsetBeats: 0, notes: "C3", lengthBeats: 1 },
+      { offsetBeats: 1, notes: "G3", lengthBeats: 1 },
+      { offsetBeats: 2, notes: "F3", lengthBeats: 1 },
+      { offsetBeats: 3, notes: "C4", lengthBeats: 1 },
+      { offsetBeats: 4, notes: "G3", lengthBeats: 1 },
+      { offsetBeats: 5, notes: "D4", lengthBeats: 1 },
+      { offsetBeats: 6, notes: "E4", lengthBeats: 1 },
+      { offsetBeats: 7, notes: "C4", lengthBeats: 1 },
+    ];
+    const STAGE1_ARP_NOTES = ["C6", "E6", "G6", "C7", "G6", "E6", "C6", "B5"];
+    const STAGE1_ARP_ENTRIES = STAGE1_CHORD_ENTRIES.map((entry, idx) => ({
+      offsetBeats: entry.offsetBeats + 0.1,
+      lengthBeats: 0.15,
+      notes: STAGE1_ARP_NOTES[idx],
+    }));
+    const STAGE1_DRUM_PATTERN = "K-hH|K-hH|K-hH|K-hH|K-hH|K-hH|K-hH|KChH";
+
+    // オーケストラ風スペースオペラ（宇宙面）
+    const STAGE2_BEAT = 0.65;
+    const STAGE2_BLOCK_BEATS = 16;
+    const STAGE2_CHORD_ENTRIES = [
+      { offsetBeats: 0, notes: "D3 F#3 A3 D4", lengthBeats: 4 },
+      { offsetBeats: 4, notes: "G3 B3 D4 G4", lengthBeats: 4 },
+      { offsetBeats: 8, notes: "C4 E4 G4 C5", lengthBeats: 4 },
+      { offsetBeats: 12, notes: "F4 A4 C5 F5", lengthBeats: 4 },
+    ];
+    const STAGE2_LEAD_ENTRIES = [
+      { offsetBeats: 0, notes: "D5", lengthBeats: 0.5 },
+      { offsetBeats: 0.5, notes: "F#5", lengthBeats: 0.5 },
+      { offsetBeats: 1, notes: "A5", lengthBeats: 0.5 },
+      { offsetBeats: 1.5, notes: "D6", lengthBeats: 0.5 },
+      { offsetBeats: 2, notes: "C#6", lengthBeats: 0.5 },
+      { offsetBeats: 2.5, notes: "B5", lengthBeats: 0.5 },
+      { offsetBeats: 3, notes: "A5", lengthBeats: 0.5 },
+      { offsetBeats: 3.5, notes: "F#5", lengthBeats: 0.5 },
+      { offsetBeats: 4, notes: "G5", lengthBeats: 0.5 },
+      { offsetBeats: 4.5, notes: "B5", lengthBeats: 0.5 },
+      { offsetBeats: 5, notes: "D6", lengthBeats: 0.5 },
+      { offsetBeats: 5.5, notes: "G6", lengthBeats: 0.5 },
+      { offsetBeats: 6, notes: "F#6", lengthBeats: 0.5 },
+      { offsetBeats: 6.5, notes: "E6", lengthBeats: 0.5 },
+      { offsetBeats: 7, notes: "D6", lengthBeats: 0.5 },
+      { offsetBeats: 7.5, notes: "B5", lengthBeats: 0.5 },
+      { offsetBeats: 8, notes: "E5", lengthBeats: 0.5 },
+      { offsetBeats: 8.5, notes: "G5", lengthBeats: 0.5 },
+      { offsetBeats: 9, notes: "B5", lengthBeats: 0.5 },
+      { offsetBeats: 9.5, notes: "E6", lengthBeats: 0.5 },
+      { offsetBeats: 10, notes: "D6", lengthBeats: 0.5 },
+      { offsetBeats: 10.5, notes: "C6", lengthBeats: 0.5 },
+      { offsetBeats: 11, notes: "B5", lengthBeats: 0.5 },
+      { offsetBeats: 11.5, notes: "G5", lengthBeats: 0.5 },
+      { offsetBeats: 12, notes: "F5", lengthBeats: 0.5 },
+      { offsetBeats: 12.5, notes: "A5", lengthBeats: 0.5 },
+      { offsetBeats: 13, notes: "C6", lengthBeats: 0.5 },
+      { offsetBeats: 13.5, notes: "F6", lengthBeats: 0.5 },
+      { offsetBeats: 14, notes: "E6", lengthBeats: 0.5 },
+      { offsetBeats: 14.5, notes: "D6", lengthBeats: 0.5 },
+      { offsetBeats: 15, notes: "C6", lengthBeats: 0.5 },
+      { offsetBeats: 15.5, notes: "A5", lengthBeats: 0.5 },
+    ];
+    const STAGE2_BASS_ENTRIES = [
+      { offsetBeats: 0, notes: "D2", lengthBeats: 2 },
+      { offsetBeats: 2, notes: "A2", lengthBeats: 2 },
+      { offsetBeats: 4, notes: "G2", lengthBeats: 2 },
+      { offsetBeats: 6, notes: "D3", lengthBeats: 2 },
+      { offsetBeats: 8, notes: "C3", lengthBeats: 2 },
+      { offsetBeats: 10, notes: "G3", lengthBeats: 2 },
+      { offsetBeats: 12, notes: "F3", lengthBeats: 2 },
+      { offsetBeats: 14, notes: "C4", lengthBeats: 2 },
+    ];
+    const STAGE2_PAD_ENTRIES = [
+      { offsetBeats: 0, notes: "D5 F#5 A5", lengthBeats: 8, gain: 0.9 },
+      { offsetBeats: 8, notes: "E5 G5 B5", lengthBeats: 8, gain: 0.9 },
+    ];
+    const STAGE2_ARP_ENTRIES = [
+      { offsetBeats: 0.5, notes: "D6", lengthBeats: 0.3 },
+      { offsetBeats: 1, notes: "F#6", lengthBeats: 0.3 },
+      { offsetBeats: 1.5, notes: "A6", lengthBeats: 0.3 },
+      { offsetBeats: 2, notes: "D7", lengthBeats: 0.3 },
+      { offsetBeats: 4.5, notes: "G6", lengthBeats: 0.3 },
+      { offsetBeats: 5, notes: "B6", lengthBeats: 0.3 },
+      { offsetBeats: 5.5, notes: "D7", lengthBeats: 0.3 },
+      { offsetBeats: 6, notes: "G7", lengthBeats: 0.3 },
+      { offsetBeats: 8.5, notes: "E6", lengthBeats: 0.3 },
+      { offsetBeats: 9, notes: "G6", lengthBeats: 0.3 },
+      { offsetBeats: 9.5, notes: "B6", lengthBeats: 0.3 },
+      { offsetBeats: 10, notes: "E7", lengthBeats: 0.3 },
+      { offsetBeats: 12.5, notes: "F6", lengthBeats: 0.3 },
+      { offsetBeats: 13, notes: "A6", lengthBeats: 0.3 },
+      { offsetBeats: 13.5, notes: "C7", lengthBeats: 0.3 },
+      { offsetBeats: 14, notes: "F7", lengthBeats: 0.3 },
+    ];
+    const STAGE2_DRUM_PATTERN = "K--hH--h|S--hH--h|K--hH--h|S--hH--h|K--hH--h|S--hH--h|K--hH--h|S--hH-C";
+
+    // ボス戦 - 重低音サウンド
+    const STAGE3_BEAT = 0.5;
+    const STAGE3_BLOCK_BEATS = 8;
+    const STAGE3_CHORD_ENTRIES = [
+      { offsetBeats: 0, notes: "C2 E2 G2 C3", lengthBeats: 2 },
+      { offsetBeats: 2, notes: "F2 Ab2 C3 F3", lengthBeats: 2 },
+      { offsetBeats: 4, notes: "G2 B2 D3 G3", lengthBeats: 2 },
+      { offsetBeats: 6, notes: "C3 Eb3 G3 C4", lengthBeats: 2 },
+    ];
+    const STAGE3_BASS_ENTRIES = [
+      { offsetBeats: 0, notes: "C1", lengthBeats: 2, gain: 1.2 },
+      { offsetBeats: 2, notes: "F1", lengthBeats: 2, gain: 1.2 },
+      { offsetBeats: 4, notes: "G1", lengthBeats: 2, gain: 1.2 },
+      { offsetBeats: 6, notes: "C2", lengthBeats: 2, gain: 1.2 },
+    ];
+    const STAGE3_LEAD_ENTRIES = [
+      { offsetBeats: 0, notes: "G4", lengthBeats: 0.25 },
+      { offsetBeats: 0.25, notes: "Bb4", lengthBeats: 0.25 },
+      { offsetBeats: 0.5, notes: "C5", lengthBeats: 0.25 },
+      { offsetBeats: 0.75, notes: "D5", lengthBeats: 0.25 },
+      { offsetBeats: 1, notes: "Eb5", lengthBeats: 0.25 },
+      { offsetBeats: 1.25, notes: "F5", lengthBeats: 0.25 },
+      { offsetBeats: 1.5, notes: "G5", lengthBeats: 0.25 },
+      { offsetBeats: 1.75, notes: "Bb5", lengthBeats: 0.25 },
+      { offsetBeats: 2, notes: "C6", lengthBeats: 0.5 },
+      { offsetBeats: 2.5, notes: "Bb5", lengthBeats: 0.25 },
+      { offsetBeats: 2.75, notes: "G5", lengthBeats: 0.25 },
+      { offsetBeats: 3, notes: "F5", lengthBeats: 0.25 },
+      { offsetBeats: 3.25, notes: "Eb5", lengthBeats: 0.25 },
+      { offsetBeats: 3.5, notes: "D5", lengthBeats: 0.5 },
+      { offsetBeats: 4, notes: "G5", lengthBeats: 0.25 },
+      { offsetBeats: 4.25, notes: "Bb5", lengthBeats: 0.25 },
+      { offsetBeats: 4.5, notes: "C6", lengthBeats: 0.25 },
+      { offsetBeats: 4.75, notes: "D6", lengthBeats: 0.25 },
+      { offsetBeats: 5, notes: "Eb6", lengthBeats: 0.25 },
+      { offsetBeats: 5.25, notes: "F6", lengthBeats: 0.25 },
+      { offsetBeats: 5.5, notes: "G6", lengthBeats: 0.25 },
+      { offsetBeats: 5.75, notes: "Bb6", lengthBeats: 0.25 },
+      { offsetBeats: 6, notes: "C7", lengthBeats: 0.5 },
+      { offsetBeats: 6.5, notes: "Bb6", lengthBeats: 0.25 },
+      { offsetBeats: 6.75, notes: "G6", lengthBeats: 0.25 },
+      { offsetBeats: 7, notes: "F6", lengthBeats: 0.25 },
+      { offsetBeats: 7.25, notes: "Eb6", lengthBeats: 0.25 },
+      { offsetBeats: 7.5, notes: "D6", lengthBeats: 0.25 },
+      { offsetBeats: 7.75, notes: "Bb5", lengthBeats: 0.25 },
+    ];
+    const STAGE3_DRUM_PATTERN = "KS|KS|KS|KS|KS|KS|KS|KS";
+
+    // クリアジングル - 明るい勝利のファンファーレ
+    const CLEAR_JINGLE_BEAT = 0.4;
+    const CLEAR_JINGLE_NOTES = [
+      { offsetBeats: 0, notes: "C5 E5 G5 C6", lengthBeats: 1 },
+      { offsetBeats: 1, notes: "E5 G5 B5 E6", lengthBeats: 1 },
+      { offsetBeats: 2, notes: "G5 B5 D6 G6", lengthBeats: 1 },
+      { offsetBeats: 3, notes: "C6 E6 G6 C7", lengthBeats: 2 },
+    ];
+
+    function playStage0Jingle() {
+      // ハンガー発進シーケンス専用のFM+PSGジングル
+      stopStageMusicInternal();
+      const base = context.currentTime;
+      const chordDur = 0.9;
+      const chordSeq = [
+        { t: 0.0, notes: [220.0, 277.18] },
+        { t: 0.9, notes: [196.0, 246.94] },
+        { t: 1.8, notes: [233.08, 293.66] },
+        { t: 2.7, notes: [261.63, 329.63] },
+        { t: 3.6, notes: [349.23, 440.0] },
+      ];
+      for (const chord of chordSeq) {
+        for (const freq of chord.notes) {
+          scheduleFmVoice(base + chord.t, freq, chordDur, 1.0, fmPreset);
+        }
+      }
+
+      const leadSeq = [
+        { t: 0.45, freq: 440.0, len: 0.5 },
+        { t: 1.05, freq: 493.88, len: 0.45 },
+        { t: 1.65, freq: 523.25, len: 0.5 },
+        { t: 2.25, freq: 587.33, len: 0.48 },
+        { t: 2.85, freq: 659.25, len: 0.56 },
+        { t: 3.45, freq: 698.46, len: 0.8 },
+      ];
+      for (const note of leadSeq) {
+        scheduleFmVoice(base + note.t, note.freq, note.len, 0.85, fmLead);
+      }
+
+      const arpSeq = [
+        { t: 0.0, freq: 880.0 },
+        { t: 0.3, freq: 660.0 },
+        { t: 0.6, freq: 990.0 },
+        { t: 0.9, freq: 740.0 },
+        { t: 1.2, freq: 1110.0 },
+        { t: 1.5, freq: 880.0 },
+        { t: 1.8, freq: 1320.0 },
+        { t: 2.1, freq: 990.0 },
+        { t: 2.4, freq: 1480.0 },
+        { t: 2.7, freq: 1110.0 },
+        { t: 3.0, freq: 1760.0 },
+        { t: 3.3, freq: 1320.0 },
+      ];
+      for (const tone of arpSeq) {
+        schedulePsgTone(base + tone.t, tone.freq, 0.22, psgLevels.arp);
+      }
+
+      const hitSeq = [0.1, 0.6, 1.1, 1.6, 2.4, 3.2, 4.0];
+      for (const t of hitSeq) {
+        schedulePsgNoise(base + t, 0.12, psgLevels.hit);
+      }
+
+      schedulePsgTone(base + 4.4, 523.25, 0.9, psgLevels.chord);
+      scheduleFmVoice(base + 4.4, 261.63, 1.1, 0.95, fmPreset);
+      scheduleFmVoice(base + 4.4, 329.63, 1.1, 0.95, fmPreset);
+
+      return { length: 5.5 };
+    }
+
+    function playStage1Theme() {
+      // ステージ1用のFinal Takeoff風ハイテンションBGMを構築
+      stopStageMusicInternal();
+      musicMode = "stage1";
+      const start = context.currentTime + 0.12;
+      scheduleStage1Block(start);
+    }
+
+    function scheduleStage1Block(baseTime) {
+      if (musicMode !== "stage1") return;
+      const beat = STAGE1_BEAT; // 約133BPM相当の明るい4/4ビート
+      const blockLength = beat * STAGE1_BLOCK_BEATS;
+
+      renderScore(STAGE1_CHORD_ENTRIES, beat, baseTime, {
+        defaultGain: 0.48,
+        preset: fmPreset,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE1_LEAD_ENTRIES, beat, baseTime, {
+        defaultGain: 1.05,
+        preset: fmLead,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE1_BASS_ENTRIES, beat, baseTime, {
+        defaultGain: 0.9,
+        preset: fmPreset,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE1_ARP_ENTRIES, beat, baseTime, {
+        defaultGain: psgLevels.arp * 0.6,
+        preset: null,
+        schedule: ({ startTime, duration, frequency, gain }) => {
+          schedulePsgTone(startTime, frequency, duration, gain);
+        },
+      });
+
+      renderEnhancedDrumPattern(STAGE1_DRUM_PATTERN, beat, baseTime, {
+        stepsPerBeat: 2,
+        velocity: 0.8,
+      });
+      schedulePsgNoise(baseTime + blockLength - 0.06, 0.08, psgLevels.hit * 0.32);
+
+      const lookAhead = 0.35;
+      const nextBase = baseTime + blockLength;
+      scheduleMusicTimer(() => scheduleStage1Block(nextBase), Math.max(0, (nextBase - context.currentTime - lookAhead) * 1000));
+    }
+
+    function playCityExitFanfare() {
+      // シティ脱出時の明るいファンファーレを演奏
+      stopStageMusicInternal();
+      musicMode = "fanfare";
+      const beat = 0.36;
+      const base = context.currentTime + 0.08;
+      const brassSeq = [
+        { t: 0 * beat, notes: [523.25, 659.25, 783.99] },
+        { t: 1 * beat, notes: [587.33, 739.99, 880.0] },
+        { t: 2 * beat, notes: [659.25, 830.61, 987.77] },
+        { t: 3 * beat, notes: [698.46, 880.0, 1046.5] },
+        { t: 4 * beat, notes: [783.99, 987.77, 1174.66] },
+        { t: 5 * beat, notes: [880.0, 1108.73, 1318.51] },
+        { t: 6 * beat, notes: [987.77, 1244.51, 1480.0] },
+        { t: 7 * beat, notes: [1046.5, 1318.51, 1661.22] },
+      ];
+      const sustain = beat * 1.4;
+      for (const chord of brassSeq) {
+        for (const freq of chord.notes) {
+          scheduleFmVoice(base + chord.t, freq, sustain, 1.0, fmPreset);
+        }
+      }
+      const fanfareLead = [
+        { t: 0.5 * beat, freq: 1174.66, len: beat * 0.6 },
+        { t: 1.5 * beat, freq: 1318.51, len: beat * 0.6 },
+        { t: 2.5 * beat, freq: 1480.0, len: beat * 0.6 },
+        { t: 3.5 * beat, freq: 1661.22, len: beat * 0.6 },
+        { t: 4.5 * beat, freq: 1760.0, len: beat * 0.6 },
+        { t: 5.0 * beat, freq: 1864.66, len: beat * 0.5 },
+        { t: 5.5 * beat, freq: 2093.0, len: beat * 0.6 },
+        { t: 6.5 * beat, freq: 2349.32, len: beat * 0.9 },
+      ];
+      for (const note of fanfareLead) {
+        scheduleFmVoice(base + note.t, note.freq, note.len, 0.95, fmLead);
+      }
+      for (let i = 0; i < 10; i++) {
+        const t = base + i * beat * 0.5;
+        schedulePsgNoise(t, 0.08, psgLevels.hit * 0.75);
+      }
+      const arpFreqs = [1046.5, 1318.51, 1661.22, 2093.0];
+      arpFreqs.forEach((freq, idx) => {
+        schedulePsgTone(base + idx * beat * 0.6 + 0.1, freq, 0.18, psgLevels.arp * 1.3);
+      });
+      scheduleMusicTimer(() => {
+        if (musicMode === "fanfare") {
+          musicMode = null;
+        }
+      }, Math.max(0, (base + beat * 9 - context.currentTime) * 1000));
+    }
+
+    function playStage2Theme() {
+      // 宇宙ステージのスペースオペラ風テーマを開始
+      stopStageMusicInternal();
+      musicMode = "stage2";
+      const start = context.currentTime + 0.2;
+      scheduleStage2Block(start);
+    }
+
+    function playStage3BossTheme() {
+      // ボス戦用の重低音テーマを開始
+      stopStageMusicInternal();
+      musicMode = "stage3";
+      const start = context.currentTime + 0.15;
+      scheduleStage3Block(start);
+    }
+
+    function scheduleStage3Block(baseTime) {
+      if (musicMode !== "stage3") return;
+      const beat = STAGE3_BEAT;
+      const blockLength = beat * STAGE3_BLOCK_BEATS;
+
+      renderScore(STAGE3_CHORD_ENTRIES, beat, baseTime, {
+        defaultGain: 1.1,
+        preset: fmPreset,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE3_BASS_ENTRIES, beat, baseTime, {
+        defaultGain: 1.3,
+        preset: fmPreset,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE3_LEAD_ENTRIES, beat, baseTime, {
+        defaultGain: 0.9,
+        preset: fmLead,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderEnhancedDrumPattern(STAGE3_DRUM_PATTERN, beat, baseTime, {
+        stepsPerBeat: 2,
+        velocity: 1.0,
+      });
+
+      const lookAhead = 0.6;
+      const nextBase = baseTime + blockLength;
+      scheduleMusicTimer(() => scheduleStage3Block(nextBase), Math.max(0, (nextBase - context.currentTime - lookAhead) * 1000));
+    }
+
+    function playStage3Theme() {
+      // ボス戦の重低音テーマを開始
+      stopStageMusicInternal();
+      musicMode = "stage3";
+      const start = context.currentTime + 0.15;
+      scheduleStage3Block(start);
+    }
+
+    function playClearJingle() {
+      // クリア時の明るいファンファーレ
+      stopStageMusicInternal();
+      musicMode = "clear";
+      const start = context.currentTime + 0.1;
+      
+      CLEAR_JINGLE_NOTES.forEach(entry => {
+        const startTime = start + entry.offsetBeats * CLEAR_JINGLE_BEAT;
+        const duration = entry.lengthBeats * CLEAR_JINGLE_BEAT;
+        const notes = entry.notes.split(/\s+/).filter(Boolean);
+        
+        notes.forEach(note => {
+          const frequency = noteNameToFrequency(note);
+          if (frequency) {
+            scheduleFmVoice(startTime, frequency, duration, 1.2, fmLead);
+          }
+        });
+      });
+    }
+
+    function scheduleStage2Block(baseTime) {
+      if (musicMode !== "stage2") return;
+      const beat = STAGE2_BEAT; // ゆったりとしたスペースオペラテンポ
+      const blockLength = beat * STAGE2_BLOCK_BEATS;
+
+      renderScore(STAGE2_CHORD_ENTRIES, beat, baseTime, {
+        defaultGain: 0.92,
+        preset: fmPreset,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE2_LEAD_ENTRIES, beat, baseTime, {
+        defaultGain: 1.0,
+        preset: fmLead,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE2_BASS_ENTRIES, beat, baseTime, {
+        defaultGain: 1.1,
+        preset: fmPreset,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderScore(STAGE2_PAD_ENTRIES, beat, baseTime, {
+        defaultGain: 0.7,
+        preset: fmLead,
+        schedule: ({ startTime, duration, frequency, gain, preset }) => {
+          scheduleFmVoice(startTime, frequency, duration, gain, preset);
+        },
+      });
+
+      renderEnhancedDrumPattern(STAGE2_DRUM_PATTERN, beat, baseTime, {
+        stepsPerBeat: 2,
+        velocity: 0.9,
+      });
+
+      renderScore(STAGE2_ARP_ENTRIES, beat, baseTime, {
+        defaultGain: psgLevels.arp * 1.05,
+        preset: null,
+        schedule: ({ startTime, duration, frequency, gain }) => {
+          schedulePsgTone(startTime, frequency, duration, gain);
+        },
+      });
+
+      const lookAhead = 0.6;
+      const nextBase = baseTime + blockLength;
+      scheduleMusicTimer(() => scheduleStage2Block(nextBase), Math.max(0, (nextBase - context.currentTime - lookAhead) * 1000));
+    }
+
+    function playLaserSfx(kind = "player") {
+      // レーザー発射音を簡易FM/PSGで再現
+      const now = context.currentTime + 0.002;
+      const osc = context.createOscillator();
+      osc.type = "sawtooth";
+      const base = kind === "enemy" ? 520 : 760;
+      osc.frequency.setValueAtTime(base, now);
+      osc.frequency.exponentialRampToValueAtTime(base * (kind === "enemy" ? 0.6 : 1.2), now + 0.16);
+      const filter = context.createBiquadFilter();
+      filter.type = "highpass";
+      filter.frequency.setValueAtTime(kind === "enemy" ? 380 : 620, now);
+      const gain = context.createGain();
+      const peak = kind === "enemy" ? 0.18 : 0.24;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(peak, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(sfxBus);
+      osc.start(now);
+      osc.stop(now + 0.26);
+      track(osc);
+      track(filter);
+      track(gain);
+    }
+
+    function playExplosionSfx(intensity = 1) {
+      // 爆発時のノイズバーストを生成
+      const now = context.currentTime + 0.002;
+      const source = context.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = false;
+      source.playbackRate.setValueAtTime(1.0 - Math.min(0.35, intensity * 0.12) + Math.random() * 0.08, now);
+      const filter = context.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(320 + intensity * 220, now);
+      filter.Q.setValueAtTime(0.8, now);
+      const gain = context.createGain();
+      const peak = Math.min(0.5, 0.22 + intensity * 0.18);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(peak, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.65 + intensity * 0.2);
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(sfxBus);
+      source.start(now);
+      source.stop(now + 0.8 + intensity * 0.2);
+      track(source);
+      track(filter);
+      track(gain);
+    }
+
+    function playSpaceAscentSfx(progress) {
+      // 宇宙上昇時の効果音
+      const now = context.currentTime + 0.002;
+      
+      // 上昇感のあるサーチェントノイズ
+      const noiseSource = context.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+      noiseSource.playbackRate.setValueAtTime(2.5 + progress * 3.5, now);
+      
+      const noiseFilter = context.createBiquadFilter();
+      noiseFilter.type = "highpass";
+      noiseFilter.frequency.setValueAtTime(800 + progress * 1200, now);
+      noiseFilter.Q.setValueAtTime(2.0, now);
+      
+      const noiseGain = context.createGain();
+      noiseGain.gain.setValueAtTime(0.0001, now);
+      noiseGain.gain.linearRampToValueAtTime(0.15 + progress * 0.25, now + 0.1);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
+      
+      // 上昇するトーン
+      const osc = context.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(120, now);
+      osc.frequency.exponentialRampToValueAtTime(480 + progress * 720, now + 1.2);
+      
+      const oscFilter = context.createBiquadFilter();
+      oscFilter.type = "lowpass";
+      oscFilter.frequency.setValueAtTime(800, now);
+      oscFilter.frequency.linearRampToValueAtTime(2000 + progress * 1000, now + 1.0);
+      
+      const oscGain = context.createGain();
+      oscGain.gain.setValueAtTime(0.0001, now);
+      oscGain.gain.linearRampToValueAtTime(0.08 + progress * 0.12, now + 0.2);
+      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.8);
+      
+      // 接続
+      noiseSource.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(sfxBus);
+      
+      osc.connect(oscFilter);
+      oscFilter.connect(oscGain);
+      oscGain.connect(sfxBus);
+      
+      // 再生
+      noiseSource.start(now);
+      noiseSource.stop(now + 1.5);
+      osc.start(now);
+      osc.stop(now + 1.8);
+      
+      track(noiseSource);
+      track(noiseFilter);
+      track(noiseGain);
+      track(osc);
+      track(oscFilter);
+      track(oscGain);
+    }
+
+    return {
+      context,
+      playStage0Jingle,
+      playStage1Theme,
+      playStage2Theme,
+      playStage3Theme,
+      playCityExitFanfare,
+      playClearJingle,
+      stopStageMusic: stopStageMusicInternal,
+      playLaserSfx,
+      playExplosionSfx,
+      playSpaceAscentSfx,
+    };
+  }
+
+  // === サウンドテストモード ===
+  let currentMode = "game"; // "game" or "soundTest"
+  let currentTrack = null;
+  let soundTestTimer = null;
+
+  function initSoundTestMode() {
+    const gameModeBtn = document.getElementById("gameMode");
+    const soundModeBtn = document.getElementById("soundModeBtn");
+    const soundTestPanel = document.getElementById("soundTest");
+    const trackButtons = document.querySelectorAll(".track-btn");
+
+    // モード切り替え
+    gameModeBtn.addEventListener("click", () => {
+      setGameMode("game");
+    });
+
+    soundModeBtn.addEventListener("click", () => {
+      setGameMode("soundTest");
+    });
+
+    // トラック選択
+    trackButtons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const track = btn.dataset.track;
+        playSoundTestTrack(track);
+        
+        // ボタンの状態更新
+        trackButtons.forEach(b => b.classList.remove("playing"));
+        btn.classList.add("playing");
+      });
+    });
+  }
+
+  function setGameMode(mode) {
+    currentMode = mode;
+    const gameModeBtn = document.getElementById("gameMode");
+    const soundModeBtn = document.getElementById("soundModeBtn");
+    const soundTestPanel = document.getElementById("soundTest");
+    const hudLabel = document.getElementById("hud");
+
+    if (mode === "soundTest") {
+      gameModeBtn.classList.remove("active");
+      soundModeBtn.classList.add("active");
+      soundTestPanel.style.display = "flex";
+      hudLabel.textContent = "SOUND TEST MODE";
+      
+      // ゲームを一時停止
+      stopStageMusic();
+      gamePhase = "soundTest";
+      
+    } else {
+      soundModeBtn.classList.remove("active");
+      gameModeBtn.classList.add("active");
+      soundTestPanel.style.display = "none";
+      hudLabel.textContent = "CITY RUN / WIREFRAME MODE";
+      
+      // トラック再生を停止
+      stopSoundTestTrack();
+      
+      // ゲームをリセット
+      resetGame();
+    }
+  }
+
+  function playSoundTestTrack(track) {
+    stopSoundTestTrack();
+    currentTrack = track;
+    
+    const controller = ensureAudioController();
+    if (!controller) return;
+    
+    switch(track) {
+      case "stage0":
+        controller.playStage0Jingle();
+        break;
+      case "stage1":
+        controller.playStage1Theme();
+        break;
+      case "stage2":
+        controller.playStage2Theme();
+        break;
+      case "stage3":
+        controller.playStage3Theme();
+        break;
+      case "clear":
+        controller.playClearJingle();
+        break;
+      case "ascent":
+        controller.playSpaceAscentSfx(0.5);
+        break;
+    }
+  }
+
+  function playBossThemeTest() {
+    // ボス戦テーマ用のテスト再生関数
+    const controller = ensureAudioController();
+    if (!controller) return;
+    
+    stopStageMusic();
+    musicMode = "stage3";
+    
+    // 少し待ってから再生を開始（音声コンテキストの準備を待つ）
+    setTimeout(() => {
+      if (currentMode === "soundTest" && currentTrack === "stage3") {
+        const start = controller.context.currentTime + 0.12;
+        scheduleStage3Block(start);
+      }
+    }, 100);
+  }
+
+  function stopSoundTestTrack() {
+    if (soundTestTimer) {
+      clearTimeout(soundTestTimer);
+      soundTestTimer = null;
+    }
+    stopStageMusic();
+    currentTrack = null;
+    
+    // ボタンの状態をリセット
+    document.querySelectorAll(".track-btn").forEach(btn => {
+      btn.classList.remove("playing");
+    });
+  }
 
   // === ベクトル演算ユーティリティ ===
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -273,6 +1765,9 @@
     thruster: 0,
   };
   const hangarScene = createHangarScene();
+  const stage1Events = {
+    chaseSpawned: false,
+  };
   const bossDistanceConstraint = {
     min: 380, // 自機とボスの最短距離（近接しすぎ防止）
     max: 520, // 自機弾が届く範囲を維持しつつ遠景シルエットを演出
@@ -286,6 +1781,7 @@
     progress: 0,
     duration: 9.0,
     passed: false,
+    ascentSfxPlayed: false,
   };
   const spaceScene = {
     objects: [],
@@ -440,6 +1936,79 @@
     ctx.lineTo(tip.x, tip.y);
     ctx.stroke();
     ctx.restore();
+  }
+
+  function drawSpaceAscentEffect() {
+    if (gamePhase !== "cityExit") return;
+    const t = cityExitState.progress;
+    const climbStart = 0.35;
+    const climbStrength = smoothstep((t - climbStart) / Math.max(0.0001, 1 - climbStart));
+    
+    if (climbStrength <= 0.001) return;
+    
+    // 複数のスラストエフェクトを生成
+    const thrustCount = 3;
+    for (let i = 0; i < thrustCount; i++) {
+      const offset = (i - (thrustCount - 1) / 2) * 2;
+      const base = {
+        x: player.pos.x + offset,
+        y: player.pos.y,
+        z: player.pos.z + 8,
+      };
+      const tailLength = 15 + climbStrength * 40 + i * 5;
+      const tail = {
+        x: base.x + (Math.random() - 0.5) * 2,
+        y: base.y - 2 - climbStrength * 3,
+        z: base.z + tailLength,
+      };
+      
+      const head = projectPoint(base);
+      const tip = projectPoint(tail);
+      if (!head || !tip) continue;
+      
+      ctx.save();
+      const alpha = (0.6 + climbStrength * 0.3) * (1 - i * 0.2);
+      const width = 2 + climbStrength * 4 - i * 0.5;
+      
+      // 青白い宇宙スラスト色
+      const gradient = ctx.createLinearGradient(head.x, head.y, tip.x, tip.y);
+      gradient.addColorStop(0, `rgba(200, 220, 255, ${alpha})`);
+      gradient.addColorStop(0.5, `rgba(150, 200, 255, ${alpha * 0.8})`);
+      gradient.addColorStop(1, `rgba(100, 150, 255, ${alpha * 0.3})`);
+      
+      ctx.lineWidth = width;
+      ctx.strokeStyle = gradient;
+      ctx.shadowColor = `rgba(150, 200, 255, ${alpha * 0.9})`;
+      ctx.shadowBlur = 20 + climbStrength * 30;
+      ctx.beginPath();
+      ctx.moveTo(head.x, head.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+    
+    // 粒子効果
+    const particleCount = Math.floor(climbStrength * 8);
+    for (let i = 0; i < particleCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 5 + Math.random() * 15;
+      const particle = {
+        x: player.pos.x + Math.cos(angle) * distance,
+        y: player.pos.y - Math.random() * 10,
+        z: player.pos.z + 10 + Math.random() * 20,
+      };
+      const screen = projectPoint(particle);
+      if (!screen) continue;
+      
+      ctx.save();
+      ctx.fillStyle = `rgba(180, 200, 255, ${climbStrength * 0.6})`;
+      ctx.shadowColor = `rgba(150, 200, 255, 0.8)`;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, 1 + Math.random() * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   // === ボックスエッジ生成（都市ビル用） ===
@@ -878,7 +2447,6 @@
       { x: -1.6, y: -0.8, z: -6 },
       { x: 1.6, y: -0.8, z: -6 },
     ];
-    audioSystem.playLaserShot(); // レーザー発射音を再生
     muzzles.forEach((off) => {
       // 自機レーザーの発光パラメータを付与
       playerShots.push({
@@ -900,6 +2468,7 @@
         pulseOffset: Math.random() * Math.PI * 2,
       });
     });
+    triggerLaserSfx("player");
   }
 
   function acquireMissileTarget() {
@@ -989,6 +2558,7 @@
       damage: enemy.shotDamage || (isGround ? 18 : 14),
       hitRadius: isGround ? 7 : 8,
     });
+    triggerLaserSfx("enemy");
   }
 
   function updatePlayerWeapons(dt) {
@@ -1463,6 +3033,8 @@
   // === シティボス撃破処理 ===
   function triggerCityBossDefeat() {
     stage1Clear = true;
+    stopStageMusic();
+    triggerCityExitFanfare();
     gamePhase = "cityExit";
     phaseTime = 0;
     cityExitState.progress = 0;
@@ -1539,6 +3111,7 @@
   function triggerPlayerGameOver() {
     if (gameOver) return;
     gameOver = true;
+    stopStageMusic();
     gameOverTime = performance.now();
     gamePhase = "gameOver";
     phaseTime = 0;
@@ -1564,9 +3137,11 @@
   }
 
   function spawnExplosion(x, y, z, scale = 1.0, duration = 0.7) {
-    audioSystem.playExplosion(scale); // 爆発規模に応じた効果音を再生
     const count = 18;
     const shards = [];
+    if (scale >= 0.8 || (scale >= 0.4 && Math.random() < 0.35)) {
+      triggerExplosionSfx(scale);
+    }
     for (let i = 0; i < count; i++) {
       let vx = Math.random() * 2 - 1;
       let vy = Math.random() * 2 - 1;
@@ -1767,9 +3342,15 @@
     camera.shake = 0;
     environment = "city";
     skyMix = 0;
+    stage1Events.chaseSpawned = false;
+    queueStage0Jingle();
   }
 
   function updateStage0(dt) {
+    if (stage0JinglePending && !stage0JinglePlayed) {
+      // サスペンド解除済みなら即時ジングル再生を試行
+      tryPlayStage0Jingle();
+    }
     const t = phaseTime;
     const doorStart = 0.9;
     const doorEnd = 2.6;
@@ -1820,6 +3401,8 @@
     missileCooldown = 0;
     missilesRemaining = MISSILE_STOCK_MAX;
     initCityEnemies();
+    queueStage1Music();
+    stage1Events.chaseSpawned = false;
   }
 
   function drawExplosions() {
@@ -2008,7 +3591,6 @@
       damage: 60,
       hitRadius: 18,
     });
-    audioSystem.playWaveCannon(); // 波動砲専用の効果音を再生
     boss.waveCharge = 1;
     boss.shake = 1.6;
   }
@@ -2024,6 +3606,7 @@
     }
     if (!boss.active && player.pos.z <= boss.spawnTriggerZ) {
       boss.active = true;
+      queueStage3Music();
     }
     if (!boss.active) return;
     boss.shake = Math.max(0, boss.shake - dt * 1.8);
@@ -2047,6 +3630,7 @@
     }
     if (!boss.active && player.pos.z <= boss.spawnTriggerZ) {
       boss.active = true;
+      queueStage3Music();
     }
     if (!boss.active) return;
     boss.shake = Math.max(0, boss.shake - dt * 0.8);
@@ -2227,6 +3811,39 @@
     };
     maybeAssignShieldCarrier(pursuer, 0.2);
     enemyObjects.push(pursuer);
+  }
+
+  function spawnStage1ChaseEnemy() {
+    // ステージ1中盤で背後から突入し即座に追い越すエース機を生成
+    const exitX = clamp((Math.random() * 2 - 1) * 28, -32, 32);
+    const chaser = {
+      type: "chaseAce",
+      shape: enemyFighterShape,
+      base: { x: player.pos.x, y: Math.max(14, player.pos.y + 6), z: player.pos.z + 34 },
+      mode: "stalk",
+      modeTimer: 0,
+      trailDistance: 32,
+      chaseLerp: 4.2,
+      chaseLerpZ: 4.4,
+      swayFreq: 2.0,
+      swayAmp: 5.5,
+      stalkDuration: 3.2,
+      burstDelay: 0.52,
+      burstsFired: 0,
+      maxBursts: 3,
+      boostSpeed: 240,
+      exitLead: 170,
+      exitX,
+      exitY: 28,
+      fireInterval: 0.48,
+      fireCooldown: 0.36,
+      hp: 140,
+      maxHp: 140,
+      hitRadius: 12,
+      shotDamage: 16,
+      hitFlash: 0,
+    };
+    enemyObjects.push(chaser);
   }
 
   function initSpaceScene() {
@@ -2475,6 +4092,35 @@
         const lerpZ = Math.min(1, dt * (enemy.chaseLerpZ || 2.0));
         const targetZ = player.pos.z + (enemy.trailDistance || 24);
         enemy.base.z += (targetZ - enemy.base.z) * lerpZ;
+      } else if (enemy.type === "chaseAce") {
+        enemy.modeTimer = (enemy.modeTimer || 0) + dt;
+        const lateralWave = Math.sin(simTime * (enemy.swayFreq || 2.0)) * (enemy.swayAmp || 5.5);
+        const targetX = clamp(player.pos.x + lateralWave, -34, 34);
+        const targetY = clamp(player.pos.y + 5, 10, 32);
+        if (enemy.mode !== "boost") {
+          const lerp = Math.min(1, dt * (enemy.chaseLerp || 4.0));
+          enemy.base.x += (targetX - enemy.base.x) * lerp;
+          enemy.base.y += (targetY - enemy.base.y) * Math.min(1, dt * 3.2);
+          const lerpZ = Math.min(1, dt * (enemy.chaseLerpZ || 4.4));
+          const targetZ = player.pos.z + (enemy.trailDistance || 30);
+          enemy.base.z += (targetZ - enemy.base.z) * lerpZ;
+          if ((enemy.modeTimer || 0) > (enemy.stalkDuration || 3.0)) {
+            enemy.mode = "boost";
+            enemy.modeTimer = 0;
+            enemy.fireInterval = 0;
+            enemy.fireCooldown = Number.POSITIVE_INFINITY;
+          }
+        } else {
+          const exitX = enemy.exitX ?? targetX;
+          const exitY = enemy.exitY ?? 24;
+          enemy.base.x += (exitX - enemy.base.x) * Math.min(1, dt * 2.0);
+          enemy.base.y += (exitY - enemy.base.y) * Math.min(1, dt * 1.6);
+          enemy.base.z -= (enemy.boostSpeed || 240) * dt;
+          if (player.pos.z - enemy.base.z > (enemy.exitLead || 160)) {
+            enemyObjects.splice(i, 1);
+            continue;
+          }
+        }
       } else if (enemy.type === "ambush") {
         const home = enemy.home || enemy.base;
         const freq = enemy.frequency || 1.0;
@@ -2536,7 +4182,20 @@
             }
             if (canFire) {
               spawnEnemyShot(enemy);
-              enemy.fireCooldown += enemy.fireInterval;
+              if (enemy.type === "chaseAce") {
+                enemy.burstsFired = (enemy.burstsFired || 0) + 1;
+                const remaining = (enemy.maxBursts || 3) - enemy.burstsFired;
+                if (remaining <= 0) {
+                  enemy.mode = "boost";
+                  enemy.modeTimer = 0;
+                  enemy.fireInterval = 0;
+                  enemy.fireCooldown = Number.POSITIVE_INFINITY;
+                } else {
+                  enemy.fireCooldown += enemy.burstDelay || enemy.fireInterval || 0.5;
+                }
+              } else {
+                enemy.fireCooldown += enemy.fireInterval;
+              }
             } else {
               enemy.fireCooldown += Math.max(0.4, enemy.fireInterval * 0.5);
             }
@@ -2601,6 +4260,10 @@
 
   // === メインループ ===
   let prevTime = performance.now();
+  
+  // サウンドテストモードを初期化
+  initSoundTestMode();
+  
   function loop(now) {
     const dt = Math.min(0.05, (now - prevTime) / 1000);
     prevTime = now;
@@ -2615,6 +4278,10 @@
   function update(dt) {
     simTime += dt;
     player.invuln = Math.max(0, player.invuln - dt);
+    if (gamePhase === "soundTest") {
+      // サウンドテストモードでは何も更新しない
+      return;
+    }
     if (gamePhase === "stage0") {
       phaseTime += dt;
       updateStage0(dt);
@@ -2646,10 +4313,19 @@
   }
 
   function updateStage1(dt) {
+    if (stage1MusicPending && !stage1MusicActive) {
+      // ユーザー操作後にBGMを確実に再開
+      tryPlayStage1Music();
+    }
     const lateralSpeed = 160;   // スペースハリアー風の俊敏な横移動速度
     const verticalSpeed = 150;  // 同じく縦方向の移動速度
     const boundsX = 32;
     const boundsY = 38; // スペースハリアー風に縦方向の可動域を広げて画面上部へも追い込めるように
+
+    if (!stage1Events.chaseSpawned && player.pos.z < -320) {
+      spawnStage1ChaseEnemy();
+      stage1Events.chaseSpawned = true;
+    }
 
     let inputX = 0;
     let inputY = 0;
@@ -2731,6 +4407,12 @@
     updateProjectiles(dt);
     updateExplosions(dt);
 
+    // 宇宙上昇効果音（上昇開始時に一度だけ再生）
+    if (climb > 0.01 && !cityExitState.ascentSfxPlayed) {
+      triggerSpaceAscentSfx(climb);
+      cityExitState.ascentSfxPlayed = true;
+    }
+
     if (prevProg < 1 && cityExitState.progress >= 1) {
       startSpaceStage();
     }
@@ -2740,6 +4422,8 @@
   function startSpaceStage() {
     cityExitState.progress = 0;
     cityExitState.passed = false;
+    cityExitState.ascentSfxPlayed = false;
+    stopStageMusic();
     environment = "space";
     skyMix = 1;
     player.vel.x = 0;
@@ -2766,6 +4450,7 @@
     setupSpaceBattleship();
     gamePhase = "stage2";
     phaseTime = 0;
+    queueStage2Music();
   }
 
   // === 宇宙ステージの更新 ===
@@ -2992,6 +4677,9 @@
     // 自機描画
     if (player.visible && gamePhase === "stage0") {
       drawStage0Thruster();
+    }
+    if (player.visible && gamePhase === "cityExit") {
+      drawSpaceAscentEffect();
     }
     const nowFrame = performance.now();
     const invulnFlash = player.invuln > 0 && Math.floor(nowFrame * 0.02) % 2 === 0;
