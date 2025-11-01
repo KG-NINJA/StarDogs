@@ -1782,6 +1782,7 @@
     duration: 9.0,
     passed: false,
     ascentSfxPlayed: false,
+    streaks: [],
   };
   const spaceScene = {
     objects: [],
@@ -1935,6 +1936,86 @@
     ctx.moveTo(head.x, head.y);
     ctx.lineTo(tip.x, tip.y);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  function initCityExitVisuals() {
+    // 宇宙突入演出用のストリークと地平線演出を初期化
+    cityExitState.streaks.length = 0;
+    const streakCount = 26;
+    for (let i = 0; i < streakCount; i++) {
+      cityExitState.streaks.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height * -0.4,
+        length: 80 + Math.random() * 140,
+        tilt: (Math.random() - 0.5) * 0.5,
+        speed: 160 + Math.random() * 240,
+      });
+    }
+  }
+
+  function updateCityExitStreaks(dt, progress) {
+    // 宇宙への上昇感を強めるためストリークを上から下へ高速移動させる
+    if (!cityExitState.streaks.length) return;
+    const speedScale = 0.35 + progress * 1.1;
+    for (const streak of cityExitState.streaks) {
+      streak.y += streak.speed * speedScale * dt;
+      if (streak.y > canvas.height + streak.length) {
+        streak.y = Math.random() * canvas.height * -0.4;
+        streak.x = Math.random() * canvas.width;
+        streak.length = 80 + Math.random() * 160;
+        streak.speed = 160 + Math.random() * 260;
+        streak.tilt = (Math.random() - 0.5) * 0.5;
+      }
+    }
+  }
+
+  function drawCityExitBackdrop() {
+    // 宇宙突入時に大気圏と地球のカーブを強調して視覚化
+    if (gamePhase !== "cityExit") return;
+    const progress = cityExitState.progress;
+    ctx.save();
+    const horizonY = canvas.height * (0.62 - progress * 0.28);
+    const atmosphere = ctx.createLinearGradient(0, horizonY, 0, canvas.height);
+    atmosphere.addColorStop(0, `rgba(0, 26, 70, ${0.45 + progress * 0.35})`);
+    atmosphere.addColorStop(0.45, `rgba(0, 90, 180, ${0.36 + progress * 0.3})`);
+    atmosphere.addColorStop(1, `rgba(0, 140, 220, ${0.18 + progress * 0.2})`);
+    ctx.fillStyle = atmosphere;
+    ctx.fillRect(0, horizonY, canvas.width, canvas.height - horizonY);
+
+    const glow = ctx.createLinearGradient(0, horizonY - 200, 0, horizonY + 80);
+    glow.addColorStop(0, "rgba(0, 180, 255, 0)");
+    glow.addColorStop(0.6, `rgba(0, 220, 255, ${0.28 + progress * 0.28})`);
+    glow.addColorStop(1, "rgba(0, 255, 255, 0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, horizonY - 200, canvas.width, 280);
+
+    ctx.save();
+    const arcRadius = canvas.height * (1.6 - progress * 0.4);
+    ctx.translate(canvas.width * 0.5, horizonY + arcRadius * 0.18);
+    ctx.scale(1.82, 0.62 + progress * 0.22);
+    ctx.lineWidth = 2.4 + progress * 3.6;
+    ctx.strokeStyle = `rgba(0, 220, 255, ${0.32 + progress * 0.4})`;
+    ctx.shadowColor = `rgba(0, 220, 255, ${0.25 + progress * 0.35})`;
+    ctx.shadowBlur = 28 + progress * 60;
+    ctx.beginPath();
+    ctx.arc(0, 0, arcRadius, Math.PI * 1.06, Math.PI * 1.94, false);
+    ctx.stroke();
+    ctx.restore();
+
+    if (cityExitState.streaks.length) {
+      ctx.globalCompositeOperation = "lighter";
+      for (const streak of cityExitState.streaks) {
+        const length = streak.length * (0.4 + progress * 0.9);
+        ctx.strokeStyle = `rgba(140, 210, 255, ${0.18 + progress * 0.45})`;
+        ctx.lineWidth = 1.2 + progress * 2.2;
+        ctx.beginPath();
+        ctx.moveTo(streak.x, streak.y);
+        ctx.lineTo(streak.x + Math.sin(streak.tilt) * length * 0.6, streak.y + length);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = "source-over";
+    }
     ctx.restore();
   }
 
@@ -3039,6 +3120,7 @@
     phaseTime = 0;
     cityExitState.progress = 0;
     cityExitState.passed = false;
+    initCityExitVisuals();
     enemyObjects.length = 0;
     playerShots.length = 0;
     playerMissiles.length = 0;
@@ -4383,6 +4465,7 @@
     const prevProg = cityExitState.progress;
     cityExitState.progress = Math.min(1, cityExitState.progress + dt / cityExitState.duration);
     const t = cityExitState.progress;
+    updateCityExitStreaks(dt, t);
     const speedBoost = 0.9 + t * 0.35;
     player.pos.z -= player.speedForward * speedBoost * dt;
     if (!cityExitState.passed && player.pos.z <= boss.pos.z - 160) {
@@ -4423,6 +4506,7 @@
     cityExitState.progress = 0;
     cityExitState.passed = false;
     cityExitState.ascentSfxPlayed = false;
+    cityExitState.streaks.length = 0;
     stopStageMusic();
     environment = "space";
     skyMix = 1;
@@ -4564,6 +4648,7 @@
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
     drawStars(skyMix);
+    drawCityExitBackdrop();
 
     const hpText = `HP ${Math.max(0, Math.round(player.hp))}/${player.maxHp}`;
     const shieldText = `SHIELD ${Math.max(0, Math.round(player.shield))}`;
