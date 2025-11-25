@@ -99,6 +99,7 @@
 <div id="hud">CITY RUN / WIREFRAME MODE</div>
 <div id="soundMode">
   <button class="mode-btn active" id="gameMode">Game</button>
+  <button class="mode-btn" id="finalBossMode">Final Boss Test</button>
   <button class="mode-btn" id="soundModeBtn">Sound Test</button>
 </div>
 <div id="soundTest">
@@ -134,8 +135,80 @@
     if (!ev.repeat && ev.code === "KeyF") {
       missileRequest = true; // ミサイルは単発入力で発射要求
     }
+    if (!ev.repeat) {
+      recordRollInput(ev.code);
+    }
   }, { passive: false });
   window.addEventListener("keyup", (ev) => keys.delete(ev.code));
+
+  // === ローリング入力管理 ===
+  const rollComboPattern = ["ArrowRight", "ArrowLeft", "ArrowRight"];
+  const rollInputBuffer = [];
+  const rollState = {
+    active: false,
+    direction: 1,
+    timer: 0,
+    duration: 0.75,
+    cooldown: 0,
+    cooldownDuration: 0.45,
+    rotationAngle: Math.PI * 2,
+    maxIntervalMs: 220,
+  };
+
+  function recordRollInput(code) {
+    // →←→のテンポ入力だけを監視してローリング発動を判定
+    if (code !== "ArrowLeft" && code !== "ArrowRight") {
+      return;
+    }
+    const now = performance.now();
+    rollInputBuffer.push({ code, time: now });
+    const bufferLimit = rollComboPattern.length;
+    const expiry = rollState.maxIntervalMs * rollComboPattern.length;
+    while (rollInputBuffer.length && now - rollInputBuffer[0].time > expiry) {
+      rollInputBuffer.shift();
+    }
+    while (rollInputBuffer.length > bufferLimit) {
+      rollInputBuffer.shift();
+    }
+    if (!canTriggerPlayerRoll() || rollState.active || rollState.cooldown > 0) {
+      return;
+    }
+    if (rollInputBuffer.length < rollComboPattern.length) {
+      return;
+    }
+    let tempoOk = true;
+    for (let i = 1; i < rollInputBuffer.length; i++) {
+      if (rollInputBuffer[i].time - rollInputBuffer[i - 1].time > rollState.maxIntervalMs) {
+        tempoOk = false;
+        break;
+      }
+    }
+    if (!tempoOk) return;
+    for (let i = 0; i < rollComboPattern.length; i++) {
+      if (rollInputBuffer[i].code !== rollComboPattern[i]) {
+        return;
+      }
+    }
+    const direction = rollComboPattern[rollComboPattern.length - 1] === "ArrowLeft" ? -1 : 1;
+    rollInputBuffer.length = 0;
+    startPlayerRoll(direction);
+  }
+
+  function canTriggerPlayerRoll() {
+    // 自機操作可能なフェーズのみ判定
+    if (!player.visible || gameOver) return false;
+    return ["stage1", "cityExit", "stage2", "finalBoss", "finalClear"].includes(gamePhase);
+  }
+
+  function startPlayerRoll(direction) {
+    // ローリング状態の初期化
+    rollState.active = true;
+    rollState.direction = direction;
+    rollState.timer = rollState.duration;
+    rollState.cooldown = rollState.duration + rollState.cooldownDuration;
+    player.invuln = Math.max(player.invuln, rollState.duration);
+    camera.shake = Math.max(camera.shake, 0.7);
+  }
 
   // === オーディオ制御 ===
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -1653,6 +1726,7 @@
 
   function initSoundTestMode() {
     const gameModeBtn = document.getElementById("gameMode");
+    const finalBossModeBtn = document.getElementById("finalBossMode");
     const soundModeBtn = document.getElementById("soundModeBtn");
     const soundTestPanel = document.getElementById("soundTest");
     const trackButtons = document.querySelectorAll(".track-btn");
@@ -1660,6 +1734,9 @@
     // モード切り替え
     gameModeBtn.addEventListener("click", () => {
       setGameMode("game");
+    });
+    finalBossModeBtn.addEventListener("click", () => {
+      setGameMode("finalBossTest");
     });
 
     soundModeBtn.addEventListener("click", () => {
@@ -1682,12 +1759,14 @@
   function setGameMode(mode) {
     currentMode = mode;
     const gameModeBtn = document.getElementById("gameMode");
+    const finalBossModeBtn = document.getElementById("finalBossMode");
     const soundModeBtn = document.getElementById("soundModeBtn");
     const soundTestPanel = document.getElementById("soundTest");
     const hudLabel = document.getElementById("hud");
 
     if (mode === "soundTest") {
       gameModeBtn.classList.remove("active");
+      finalBossModeBtn.classList.remove("active");
       soundModeBtn.classList.add("active");
       soundTestPanel.style.display = "flex";
       hudLabel.textContent = "SOUND TEST MODE";
@@ -1696,9 +1775,21 @@
       stopStageMusic();
       gamePhase = "soundTest";
       
+    } else if (mode === "finalBossTest") {
+      gameModeBtn.classList.remove("active");
+      soundModeBtn.classList.remove("active");
+      finalBossModeBtn.classList.add("active");
+      soundTestPanel.style.display = "none";
+      hudLabel.textContent = "FINAL BOSS TEST MODE";
+
+      // 最終ボス試遊用に即座にステージを構築
+      stopSoundTestTrack();
+      startFinalBossTest();
+
     } else {
       soundModeBtn.classList.remove("active");
       gameModeBtn.classList.add("active");
+       finalBossModeBtn.classList.remove("active");
       soundTestPanel.style.display = "none";
       hudLabel.textContent = "CITY RUN / WIREFRAME MODE";
       
@@ -1847,11 +1938,32 @@
     type: "boss",
     variant: "tank",
     waveCharge: 0,
+    suctionActive: false,
+    suctionTimer: 0,
+    suctionDuration: 0,
+    suctionCooldown: 0,
+    suctionWarmup: 0,
+    suctionProgress: 0,
+    restZ: -3200,
+    chargeActive: false,
+    chargeTimer: 0,
+    chargeDuration: 0,
+    chargeCooldown: 0,
+    chargeOriginZ: 0,
+    chargeTargetZ: 0,
+    chargeProgress: 0,
+    chargeLaughed: false,
+    laughTimer: 0,
+    laughCooldown: 0,
+    waveCooldown: 0,
+    eyeLaserCooldown: 0,
   };
   let stageClear = false;
   let stageClearTime = 0;
   let gameOver = false;
   let gameOverTime = 0;
+  let finalBossQueued = false;
+  let finalBossCountdown = 0;
 
   // === ゲームフェーズ管理 ===
   let gamePhase = "stage0";
@@ -1876,6 +1988,14 @@
   const battleshipDistanceConstraint = {
     min: 540, // 戦艦の波動砲を視認しつつ被弾圏外に保つ距離
     max: 780,
+  };
+  const finalBossDistanceConstraint = {
+    min: 520, // 最終ボスとの距離を張り詰めた間合いに保つ
+    max: 700,
+  };
+  const finalBossChargeConstraint = {
+    min: 160, // 突進時に画面手前へ迫らせる下限距離
+    max: 640,
   };
   let stage1Clear = false;
   const cityExitState = {
@@ -2036,6 +2156,39 @@
     ctx.beginPath();
     ctx.moveTo(head.x, head.y);
     ctx.lineTo(tip.x, tip.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawInvulnAura() {
+    if (!player.visible || !rollState.active) return;
+    const centerWorld = { x: player.pos.x, y: player.pos.y, z: player.pos.z - 4 };
+    const refWorld = { x: player.pos.x + player.hitRadius * 1.2, y: player.pos.y, z: player.pos.z - 4 };
+    const center = projectPoint(centerWorld);
+    const ref = projectPoint(refWorld);
+    if (!center || !ref) return;
+    const pixelScale = Math.max(2, Math.hypot(ref.x - center.x, ref.y - center.y));
+    const baseRadius = pixelScale * 2.8;
+    const rollRatio = clamp(1 - rollState.timer / rollState.duration, 0, 1);
+    const auraStrength = 0.35 + rollRatio * 0.85;
+    const pulse = 0.92 + Math.sin(performance.now() * 0.008 + player.pos.z * 0.02) * 0.08;
+    const radius = baseRadius * (0.9 + auraStrength * 0.3) * pulse;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.shadowColor = `rgba(0, 190, 255, ${0.35 + 0.2 * Math.min(1, auraStrength)})`;
+    ctx.shadowBlur = 18 + auraStrength * 26;
+    const gradient = ctx.createRadialGradient(center.x, center.y, Math.max(6, radius * 0.35), center.x, center.y, radius);
+    gradient.addColorStop(0, `rgba(0, 255, 255, ${0.32 + auraStrength * 0.16})`);
+    gradient.addColorStop(0.7, `rgba(0, 150, 255, ${0.18 + auraStrength * 0.18})`);
+    gradient.addColorStop(1, "rgba(0, 90, 255, 0)");
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.4 + auraStrength * 2.0;
+    ctx.strokeStyle = `rgba(0, 255, 255, ${0.15 + auraStrength * 0.2})`;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius * 0.65, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -2494,6 +2647,8 @@
   const enemyFighterShapeIncoming = edgesToFloat32(rotateEdgeListY(enemyFighterShapeBase, Math.PI));
   const enemyRobotShape = edgesToFloat32(buildGroundRobotShape());
   const bossTankShape = buildBossTank();
+  const spaceBattleshipShape = buildSpaceBattleship();
+  const finalBossFaceShape = buildFinalBossFace();
 
   function setupTankBoss() {
     boss.variant = "tank";
@@ -2509,9 +2664,26 @@
     boss.turretYaw = 0;
     boss.edges = bossTankShape.edges;
     boss.hitboxes = bossTankShape.hitboxes;
+    boss.suctionActive = false;
+    boss.suctionTimer = 0;
+    boss.suctionDuration = 0;
+    boss.suctionCooldown = 0;
+    boss.suctionWarmup = 0;
+    boss.suctionProgress = 0;
+    boss.restZ = boss.pos.z;
+    boss.chargeActive = false;
+    boss.chargeTimer = 0;
+    boss.chargeDuration = 0;
+    boss.chargeCooldown = 0;
+    boss.chargeOriginZ = boss.pos.z;
+    boss.chargeTargetZ = boss.pos.z;
+    boss.chargeProgress = 0;
+    boss.chargeLaughed = false;
+    boss.laughTimer = 0;
+    boss.laughCooldown = 0;
+    boss.waveCooldown = 0;
+    boss.eyeLaserCooldown = 0;
   }
-
-  const spaceBattleshipShape = buildSpaceBattleship();
 
   function setupSpaceBattleship() {
     boss.variant = "battleship";
@@ -2528,6 +2700,62 @@
     boss.turretYaw = 0;
     boss.edges = spaceBattleshipShape.edges;
     boss.hitboxes = spaceBattleshipShape.hitboxes;
+    boss.suctionActive = false;
+    boss.suctionTimer = 0;
+    boss.suctionDuration = 0;
+    boss.suctionCooldown = 0;
+    boss.suctionWarmup = 0;
+    boss.suctionProgress = 0;
+    boss.restZ = boss.pos.z;
+    boss.chargeActive = false;
+    boss.chargeTimer = 0;
+    boss.chargeDuration = 0;
+    boss.chargeCooldown = 0;
+    boss.chargeOriginZ = boss.pos.z;
+    boss.chargeTargetZ = boss.pos.z;
+    boss.chargeProgress = 0;
+    boss.chargeLaughed = false;
+    boss.laughTimer = 0;
+    boss.laughCooldown = 0;
+    boss.waveCooldown = 0;
+    boss.eyeLaserCooldown = 0;
+  }
+
+  function setupFinalBoss() {
+    // 最終ボス（巨大な顔）の初期ステータスを構築
+    boss.variant = "finalFace";
+    boss.active = false;
+    boss.destroyed = false;
+    boss.spawnTriggerZ = -9999;
+    boss.pos = { x: 0, y: 240, z: -5200 };
+    boss.hp = 3200;
+    boss.maxHp = 3200;
+    boss.fireCooldown = 3.4;
+    boss.fireInterval = 4.6;
+    boss.waveCharge = 0;
+    boss.shake = 0;
+    boss.turretYaw = 0;
+    boss.edges = finalBossFaceShape.edges;
+    boss.hitboxes = finalBossFaceShape.hitboxes;
+    boss.suctionActive = false;
+    boss.suctionTimer = 0;
+    boss.suctionDuration = 0;
+    boss.suctionCooldown = 3.0;
+    boss.suctionWarmup = 0;
+    boss.suctionProgress = 0;
+    boss.restZ = boss.pos.z;
+    boss.chargeActive = false;
+    boss.chargeTimer = 0;
+    boss.chargeDuration = 0;
+    boss.chargeCooldown = 4.5 + Math.random() * 2.0;
+    boss.chargeOriginZ = boss.pos.z;
+    boss.chargeTargetZ = boss.pos.z;
+    boss.chargeProgress = 0;
+    boss.chargeLaughed = false;
+    boss.laughTimer = 0;
+    boss.laughCooldown = 0;
+    boss.waveCooldown = 0;
+    boss.eyeLaserCooldown = 0;
   }
 
   setupTankBoss();
@@ -2560,6 +2788,87 @@
       { min: { x: -32, y: -8, z: 90 }, max: { x: 32, y: 8, z: 150 }, weight: 1.2 },
     ];
     return { edges, hitboxes };
+  }
+
+  function buildFinalBossFace() {
+    // 巨大な顔型ボスのワイヤーフレーム群を生成
+    const outlineEdges = [];
+    const segments = 28;
+    const radiusX = 90;
+    const radiusY = 70;
+    const frontZ = -70;
+    const innerZ = 40;
+    for (let i = 0; i < segments; i++) {
+      const a0 = (i / segments) * Math.PI * 2;
+      const a1 = ((i + 1) / segments) * Math.PI * 2;
+      const ax = Math.cos(a0) * radiusX;
+      const ay = Math.sin(a0) * radiusY;
+      const bx = Math.cos(a1) * radiusX;
+      const by = Math.sin(a1) * radiusY;
+      outlineEdges.push(
+        [{ x: ax, y: ay, z: frontZ }, { x: bx, y: by, z: frontZ }],
+        [{ x: ax * 0.9, y: ay * 0.94, z: innerZ }, { x: bx * 0.9, y: by * 0.94, z: innerZ }],
+        [{ x: ax, y: ay, z: frontZ }, { x: ax * 0.85, y: ay * 0.88, z: innerZ }],
+      );
+    }
+    const eyes = [
+      ...createBoxEdges(-32, 18, -48, 26, 16, 8),
+      ...createBoxEdges(32, 18, -48, 26, 16, 8),
+    ];
+    const nose = [
+      ...createBoxEdges(0, 4, -36, 14, 30, 12),
+      ...createBoxEdges(0, -12, -46, 10, 12, 16),
+    ];
+    const mouthEdges = [];
+    const mouthSegments = 16;
+    const mouthRadiusX = 48;
+    const mouthRadiusY = 18;
+    const mouthZ = -62;
+    for (let i = 0; i < mouthSegments; i++) {
+      const t0 = (i / mouthSegments) * Math.PI;
+      const t1 = ((i + 1) / mouthSegments) * Math.PI;
+      const ax = Math.cos(t0) * mouthRadiusX;
+      const ay = Math.sin(t0) * mouthRadiusY - 38;
+      const bx = Math.cos(t1) * mouthRadiusX;
+      const by = Math.sin(t1) * mouthRadiusY - 38;
+      mouthEdges.push([{ x: ax, y: ay, z: mouthZ }, { x: bx, y: by, z: mouthZ }]);
+    }
+    const crown = [];
+    crown.push(...createBoxEdges(0, 74, -34, 60, 12, 44));
+    for (let i = -2; i <= 2; i++) {
+      const spikeX = i * 16;
+      crown.push(
+        [
+          { x: spikeX, y: 86, z: -42 },
+          { x: spikeX, y: 104, z: -60 },
+        ],
+        [
+          { x: spikeX, y: 104, z: -60 },
+          { x: spikeX + i * 2, y: 88, z: -24 },
+        ],
+      );
+    }
+    const edges = {
+      outline: edgesToFloat32(outlineEdges),
+      eyes: edgesToFloat32(eyes),
+      nose: edgesToFloat32(nose),
+      mouth: edgesToFloat32(mouthEdges),
+      crown: edgesToFloat32(crown),
+    };
+    const hitboxes = [
+      { min: { x: -84, y: -66, z: -90 }, max: { x: 84, y: 80, z: 52 }, weight: 1.0 },
+      { min: { x: -34, y: -18, z: -92 }, max: { x: 34, y: 28, z: 18 }, weight: 1.3 },
+    ];
+    return { edges, hitboxes };
+  }
+
+  function resetGame() {
+    // 通常進行用にゲーム全体を初期状態へ戻す
+    setupTankBoss();
+    stageClear = false;
+    finalBossQueued = false;
+    finalBossCountdown = 0;
+    initStage0Scene();
   }
 
   function buildBossTank() {
@@ -2756,6 +3065,43 @@
     missileRequest = false;
   }
 
+  function updatePlayerRolling(dt) {
+    // ローリング残り時間およびクールダウンを更新
+    rollState.cooldown = Math.max(0, rollState.cooldown - dt);
+    if (!rollState.active) return;
+    rollState.timer = Math.max(0, rollState.timer - dt);
+    const progress = clamp(1 - rollState.timer / rollState.duration, 0, 1);
+    const eased = easeInOutCubic(progress);
+    const spin = rollState.direction * rollState.rotationAngle * eased;
+    player.roll = spin;
+    if (rollState.timer <= 0) {
+      rollState.active = false;
+      player.roll = 0;
+    }
+  }
+
+  function deflectEnemyShot(shot, nx, ny, nz) {
+    // 正面法線を用いたシンプルな反射で敵弾を無効化
+    const len = Math.hypot(nx, ny, nz) || 1;
+    const ux = nx / len;
+    const uy = ny / len;
+    const uz = nz / len;
+    const dot = shot.vel.x * ux + shot.vel.y * uy + shot.vel.z * uz;
+    shot.vel.x -= 2 * dot * ux;
+    shot.vel.y -= 2 * dot * uy;
+    shot.vel.z -= 2 * dot * uz;
+    shot.ttl = Math.min(shot.ttl, 0.4);
+    shot.lifeMax = Math.max(shot.lifeMax || 0.4, shot.ttl);
+    shot.damage = 0;
+    shot.deflected = true;
+    shot.color = "rgba(80, 220, 255, 0.95)";
+    shot.glowStart = "rgba(0, 200, 255, 0.7)";
+    shot.glowEnd = "rgba(0, 120, 255, 0.05)";
+    shot.coreColor = "rgba(255, 255, 255, 0.8)";
+    shot.shadowColor = "rgba(0, 180, 255, 0.75)";
+    spawnExplosion(shot.pos.x, shot.pos.y, shot.pos.z, 0.6, 0.3);
+  }
+
   function updateProjectiles(dt) {
     // レーザー進行
     for (let i = playerShots.length - 1; i >= 0; i--) {
@@ -2768,7 +3114,7 @@
       shot.pos.y += shot.vel.y * dt;
       shot.pos.z += shot.vel.z * dt;
       shot.ttl -= dt;
-      if (boss.active && !boss.destroyed) {
+      if (boss.active && !boss.destroyed && !shot.absorbed) {
         const weight = pointInsideBoss(shot.pos.x, shot.pos.y, shot.pos.z);
         if (weight) {
           spawnExplosion(shot.pos.x, shot.pos.y, shot.pos.z, 0.9, 0.4);
@@ -2842,7 +3188,7 @@
         trail.shift();
       }
       missile.ttl -= dt;
-      if (boss.active && !boss.destroyed) {
+      if (boss.active && !boss.destroyed && !missile.absorbed) {
         const weight = pointInsideBoss(missile.pos.x, missile.pos.y, missile.pos.z);
         if (weight) {
           spawnExplosion(missile.pos.x, missile.pos.y, missile.pos.z, 2.0, 0.6);
@@ -2892,7 +3238,11 @@
         const dz = shot.pos.z - player.pos.z;
         const dist = Math.hypot(dx, dy, dz);
         const hitRange = shot.hitRadius || (player.hitRadius + 3);
-        if (dist <= hitRange) {
+        if (dist <= hitRange && !shot.deflected) {
+          if (rollState.active) {
+            deflectEnemyShot(shot, dx, dy, dz);
+            continue;
+          }
           applyPlayerDamage(shot.damage || 12, shot);
           enemyShots.splice(i, 1);
           continue;
@@ -3045,6 +3395,30 @@
     ctx.restore();
   }
 
+  // === 最終ボスの口アニメーション描画 ===
+  function drawFinalBossLaughMouth(openRatio) {
+    const basePoint = bossLocalToWorld(0, -36, -60);
+    const center = projectPoint(basePoint);
+    if (!center) return;
+    const left = projectPoint(bossLocalToWorld(-44, -36, -60));
+    const right = projectPoint(bossLocalToWorld(44, -36, -60));
+    const top = projectPoint(bossLocalToWorld(0, -30 + openRatio * 8, -60));
+    const bottom = projectPoint(bossLocalToWorld(0, -45 - openRatio * 20, -60));
+    if (!left || !right || !top || !bottom) return;
+    const halfWidth = Math.max(6, Math.abs(right.x - left.x) * 0.5);
+    const mouthCenterY = (top.y + bottom.y) * 0.5;
+    const halfHeight = Math.max(5, Math.abs(bottom.y - top.y) * 0.5);
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(center.x, mouthCenterY, halfWidth, halfHeight, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(0, 40, 110, ${0.45 + openRatio * 0.25})`;
+    ctx.strokeStyle = `rgba(0, 220, 255, ${0.6 + openRatio * 0.3})`;
+    ctx.lineWidth = 2.4;
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawPlayerStatusOverlay(hpText, shieldText, stockText) {
     const scale = Math.max(canvas.width / 1280, canvas.height / 720);
     const panelWidth = canvas.width * 0.22;
@@ -3157,6 +3531,18 @@
         antenna: { edges: boss.edges.antenna, transform: yawTransform },
       };
     }
+    if (boss.variant === "finalFace") {
+      const yaw = boss.turretYaw || 0;
+      const yawTransform = { ...baseTransform, yaw };
+      return {
+        variant: "finalFace",
+        outline: { edges: boss.edges.outline, transform: yawTransform },
+        eyes: { edges: boss.edges.eyes, transform: yawTransform },
+        nose: { edges: boss.edges.nose, transform: yawTransform },
+        mouth: { edges: boss.edges.mouth, transform: yawTransform },
+        crown: { edges: boss.edges.crown, transform: yawTransform },
+      };
+    }
     const yaw = boss.turretYaw || 0;
     const yawTransform = { ...baseTransform, yaw };
     return {
@@ -3198,6 +3584,14 @@
           const oy = Math.random() * 50 - 10;
           const oz = (Math.random() - 0.5) * 160;
           spawnExplosion(boss.pos.x + ox, boss.pos.y + oy, boss.pos.z + oz, 5.4, 1.6);
+        }
+        prepareFinalBossTransition();
+      } else if (boss.variant === "finalFace") {
+        for (let i = 0; i < 18; i++) {
+          const ox = (Math.random() - 0.5) * 140;
+          const oy = (Math.random() - 0.2) * 120;
+          const oz = (Math.random() - 0.5) * 140;
+          spawnExplosion(boss.pos.x + ox, boss.pos.y + oy, boss.pos.z + oz, 4.0, 1.4);
         }
         triggerFinalVictory();
       } else {
@@ -3655,6 +4049,8 @@
     camera.pos.z = player.pos.z + camLag;
     camera.shake = Math.max(camera.shake * Math.pow(0.25, dt), stage0State.thruster * 0.35);
 
+    updatePlayerRolling(dt);
+
     if (launchProgress >= 1 && t >= launchStart + launchDuration + 0.5) {
       enterStage1();
     }
@@ -3875,6 +4271,10 @@
       updateBattleshipBoss(dt);
       return;
     }
+    if (boss.variant === "finalFace") {
+      updateFinalBossFace(dt);
+      return;
+    }
     if (boss.destroyed) {
       boss.shake = Math.max(0, boss.shake - dt * 1.8);
       return;
@@ -3923,6 +4323,301 @@
       spawnWaveCannon();
       boss.fireCooldown = boss.fireInterval + Math.random() * 1.6;
     }
+  }
+
+  // === 最終ボス挙動 ===
+  function updateFinalBossFace(dt) {
+    if (boss.destroyed) {
+      boss.shake = Math.max(0, boss.shake - dt * 1.1);
+      return;
+    }
+    if (!boss.active) {
+      boss.active = true;
+      queueStage3Music();
+    }
+    boss.shake = Math.max(0, boss.shake - dt * 1.4);
+    boss.laughTimer = Math.max(0, boss.laughTimer - dt);
+    boss.laughCooldown = Math.max(0, boss.laughCooldown - dt);
+    boss.waveCooldown = Math.max(0, boss.waveCooldown - dt);
+    boss.eyeLaserCooldown = Math.max(0, boss.eyeLaserCooldown - dt);
+    const dx = player.pos.x - boss.pos.x;
+    const dz = player.pos.z - boss.pos.z;
+    const targetYaw = Math.atan2(dx, -(dz || 1e-3));
+    boss.turretYaw += (targetYaw - boss.turretYaw) * Math.min(1, dt * 1.2);
+    const hoverY = 220 + Math.sin(simTime * 0.6) * 10;
+    boss.pos.y += (hoverY - boss.pos.y) * Math.min(1, dt * 0.5);
+
+    // 突進中は前進・後退フェーズに応じてZ位置を補間
+    if (boss.chargeActive) {
+      boss.chargeTimer += dt;
+      const half = Math.max(0.0001, boss.chargeDuration * 0.5);
+      if (boss.chargeTimer <= half) {
+        const prog = smoothstep(boss.chargeTimer / half);
+        boss.pos.z = boss.chargeOriginZ + (boss.chargeTargetZ - boss.chargeOriginZ) * prog;
+        boss.chargeProgress = prog * 0.5;
+      } else {
+        const retreatProg = smoothstep((boss.chargeTimer - half) / half);
+        if (!boss.chargeLaughed) {
+          boss.laughTimer = 1.6;
+          boss.chargeLaughed = true;
+          boss.laughCooldown = 4.5 + Math.random() * 2.5;
+        }
+        boss.pos.z = boss.chargeTargetZ + (boss.restZ - boss.chargeTargetZ) * retreatProg;
+        boss.chargeProgress = 0.5 + retreatProg * 0.5;
+      }
+      if (boss.chargeTimer >= boss.chargeDuration) {
+        boss.chargeActive = false;
+        boss.chargeTimer = 0;
+        boss.chargeDuration = 0;
+        boss.chargeProgress = 0;
+        boss.pos.z = boss.restZ;
+        boss.chargeCooldown = 6.0 + Math.random() * 4.0;
+        boss.chargeLaughed = false;
+      }
+    } else {
+      // 待機時は元の位置へゆるやかに戻す
+      boss.pos.z += (boss.restZ - boss.pos.z) * Math.min(1, dt * 0.8);
+      boss.chargeProgress = Math.max(0, boss.chargeProgress - dt * 0.6);
+      boss.chargeCooldown = Math.max(0, boss.chargeCooldown - dt);
+      if (boss.chargeCooldown <= 0 && !boss.suctionActive && !stageClear) {
+        boss.chargeActive = true;
+        boss.chargeTimer = 0;
+        boss.chargeDuration = 3.0 + Math.random() * 0.8;
+        boss.chargeOriginZ = boss.pos.z;
+        const desired = player.pos.z - 120;
+        const nearCap = boss.restZ + 640;
+        const farCap = boss.restZ + 320;
+        boss.chargeTargetZ = clamp(desired, farCap, nearCap);
+        boss.chargeProgress = 0;
+        boss.chargeLaughed = false;
+        boss.laughTimer = 0;
+      }
+    }
+
+    boss.fireCooldown -= dt;
+    if (boss.suctionActive) {
+      boss.suctionTimer += dt;
+      boss.suctionProgress = clamp(boss.suctionTimer / Math.max(0.001, boss.suctionDuration), 0, 1);
+      if (boss.suctionWarmup > 0) {
+        boss.suctionWarmup = Math.max(0, boss.suctionWarmup - dt);
+      }
+      applyFinalBossSuction(dt);
+      if (boss.suctionTimer >= boss.suctionDuration) {
+        boss.suctionActive = false;
+        boss.suctionTimer = 0;
+        boss.suctionDuration = 0;
+        boss.suctionCooldown = 5 + Math.random() * 2.5;
+        boss.suctionProgress = 0;
+        for (const shot of playerShots) {
+          if (shot && shot.absorbed) delete shot.absorbed;
+        }
+        for (const missile of playerMissiles) {
+          if (missile && missile.absorbed) delete missile.absorbed;
+        }
+      }
+    } else {
+      boss.suctionCooldown = Math.max(0, boss.suctionCooldown - dt);
+      if (boss.suctionCooldown <= 0 && !stageClear && !boss.chargeActive) {
+        boss.suctionActive = true;
+        boss.suctionTimer = 0;
+        boss.suctionDuration = 2.6;
+        boss.suctionWarmup = 0.45;
+        boss.suctionProgress = 0;
+        triggerLaserSfx("enemy");
+      }
+    }
+    const playerDistance = player.pos.z - boss.pos.z;
+    const farDistance = playerDistance > finalBossDistanceConstraint.max - 20;
+    const canAttack = !boss.suctionActive && !boss.chargeActive && !stageClear;
+    if (canAttack && farDistance && boss.waveCooldown <= 0) {
+      spawnFinalBossWave();
+      boss.waveCooldown = 6.0 + Math.random() * 2.5;
+      boss.shake = Math.max(boss.shake, 1.6);
+      boss.fireCooldown = Math.max(boss.fireCooldown, 1.2);
+      boss.eyeLaserCooldown = Math.max(boss.eyeLaserCooldown, 1.8);
+    } else if (canAttack && boss.eyeLaserCooldown <= 0) {
+      spawnFinalBossEyeLasers();
+      boss.eyeLaserCooldown = 2.6 + Math.random() * 1.4;
+      boss.fireCooldown = Math.max(boss.fireCooldown, 0.7);
+    }
+    if (!boss.suctionActive && !boss.chargeActive && boss.fireCooldown <= 0 && !stageClear) {
+      spawnFinalBossBurst();
+      boss.fireCooldown = boss.fireInterval + Math.random() * 0.8;
+    }
+  }
+
+  // === 最終ボス吸い込み処理 ===
+  function applyFinalBossSuction(dt) {
+    const origin = bossLocalToWorld(0, -10, -68);
+    const pull = 6 + boss.suctionProgress * 16;
+    for (let i = playerShots.length - 1; i >= 0; i--) {
+      const shot = playerShots[i];
+      if (!shot) {
+        playerShots.splice(i, 1);
+        continue;
+      }
+      shot.absorbed = true;
+      const dx = origin.x - shot.pos.x;
+      const dy = origin.y - shot.pos.y;
+      const dz = origin.z - shot.pos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      const factor = Math.min(1, dt * pull);
+      shot.pos.x += dx * factor;
+      shot.pos.y += dy * factor;
+      shot.pos.z += dz * factor;
+      shot.vel.x *= 0.2;
+      shot.vel.y *= 0.2;
+      shot.vel.z *= 0.2;
+      shot.ttl = Math.min(shot.ttl, 0.5);
+      if (dist < 16) {
+        playerShots.splice(i, 1);
+      }
+    }
+    for (let i = playerMissiles.length - 1; i >= 0; i--) {
+      const missile = playerMissiles[i];
+      if (!missile) {
+        playerMissiles.splice(i, 1);
+        continue;
+      }
+      missile.absorbed = true;
+      missile.target = null;
+      const dx = origin.x - missile.pos.x;
+      const dy = origin.y - missile.pos.y;
+      const dz = origin.z - missile.pos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      const factor = Math.min(1, dt * (pull * 0.8));
+      missile.pos.x += dx * factor;
+      missile.pos.y += dy * factor;
+      missile.pos.z += dz * factor;
+      missile.vel.x *= 0.25;
+      missile.vel.y *= 0.25;
+      missile.vel.z *= 0.25;
+      missile.ttl = Math.min(missile.ttl, 0.7);
+      if (dist < 22) {
+        playerMissiles.splice(i, 1);
+      }
+    }
+  }
+
+  // === 最終ボス射撃パターン ===
+  function spawnFinalBossBurst() {
+    if (!boss.active || boss.destroyed) return;
+    const emitters = [
+      bossLocalToWorld(-28, 18, -62),
+      bossLocalToWorld(28, 18, -62),
+      bossLocalToWorld(0, -24, -72),
+    ];
+    const speed = 260;
+    for (const emitter of emitters) {
+      const dx = player.pos.x - emitter.x;
+      const dy = player.pos.y - emitter.y;
+      const dz = player.pos.z - emitter.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist <= 1e-3) continue;
+      enemyShots.push({
+        pos: { ...emitter },
+        vel: { x: (dx / dist) * speed, y: (dy / dist) * speed, z: (dz / dist) * speed },
+        ttl: 1.8,
+        lifeMax: 1.8,
+        beam: true,
+        beamLength: 0.34,
+        width: 3.6,
+        color: "rgba(255, 150, 220, 0.92)",
+        glowStart: "rgba(0, 200, 255, 0.62)",
+        glowEnd: "rgba(0, 120, 255, 0.1)",
+        coreColor: "rgba(255, 255, 255, 0.95)",
+        shadowColor: "rgba(0, 180, 255, 0.88)",
+        spawnTime: performance.now(),
+        pulseSpeed: 7.6,
+        pulseRange: 0.18,
+        pulseOffset: Math.random() * Math.PI * 2,
+        damage: 22,
+        hitRadius: 10,
+      });
+    }
+    triggerLaserSfx("enemy");
+  }
+
+  // === 最終ボス波動砲（遠距離時） ===
+  function spawnFinalBossWave() {
+    if (!boss.active || boss.destroyed) return;
+    const base = bossLocalToWorld(0, -6, -80);
+    const spread = 44;
+    const lanes = 5;
+    for (let i = 0; i < lanes; i++) {
+      const offset = (i - (lanes - 1) * 0.5) / ((lanes - 1) * 0.5 || 1);
+      const muzzle = {
+        x: base.x + offset * spread,
+        y: base.y + Math.sin(offset * Math.PI * 0.5) * 12,
+        z: base.z,
+      };
+      const dx = player.pos.x - muzzle.x;
+      const dy = (player.pos.y - 8) - muzzle.y;
+      const dz = (player.pos.z - 4) - muzzle.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist <= 1e-3) continue;
+      const speed = 360;
+      enemyShots.push({
+        pos: { ...muzzle },
+        vel: { x: (dx / dist) * speed, y: (dy / dist) * speed, z: (dz / dist) * speed },
+        ttl: 2.3,
+        lifeMax: 2.3,
+        beam: true,
+        beamLength: 0.56,
+        width: 5.8,
+        color: "rgba(0, 220, 255, 0.95)",
+        glowStart: "rgba(0, 255, 255, 0.75)",
+        glowEnd: "rgba(0, 120, 255, 0.08)",
+        coreColor: "rgba(255, 255, 255, 0.95)",
+        shadowColor: "rgba(0, 200, 255, 0.92)",
+        spawnTime: performance.now(),
+        pulseSpeed: 8.2,
+        pulseRange: 0.22,
+        pulseOffset: Math.random() * Math.PI * 2,
+        damage: 40,
+        hitRadius: 18,
+      });
+    }
+    triggerLaserSfx("enemy");
+  }
+
+  // === 最終ボス目からのレーザー発射 ===
+  function spawnFinalBossEyeLasers() {
+    if (!boss.active || boss.destroyed) return;
+    const eyes = [
+      bossLocalToWorld(-24, 18, -52),
+      bossLocalToWorld(24, 18, -52),
+    ];
+    const speed = 420;
+    eyes.forEach((eye, idx) => {
+      const aimY = player.pos.y + (idx === 0 ? -8 : 8);
+      const dx = player.pos.x - eye.x;
+      const dy = aimY - eye.y;
+      const dz = player.pos.z - eye.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist <= 1e-3) return;
+      enemyShots.push({
+        pos: { ...eye },
+        vel: { x: (dx / dist) * speed, y: (dy / dist) * speed, z: (dz / dist) * speed },
+        ttl: 1.9,
+        lifeMax: 1.9,
+        beam: true,
+        beamLength: 0.44,
+        width: 3.4,
+        color: "rgba(255, 150, 255, 0.95)",
+        glowStart: "rgba(150, 220, 255, 0.7)",
+        glowEnd: "rgba(0, 120, 255, 0.08)",
+        coreColor: "rgba(255, 255, 255, 0.97)",
+        shadowColor: "rgba(160, 220, 255, 0.9)",
+        spawnTime: performance.now(),
+        pulseSpeed: 10.6,
+        pulseRange: 0.28,
+        pulseOffset: Math.random() * Math.PI * 2,
+        damage: 24,
+        hitRadius: 12,
+      });
+    });
+    triggerLaserSfx("enemy");
   }
 
   // === 都市レーン構築 ===
@@ -4578,6 +5273,11 @@
       updateStage2(dt);
       return;
     }
+    if (gamePhase === "finalBoss") {
+      phaseTime += dt;
+      updateFinalBossStage(dt);
+      return;
+    }
     if (gamePhase === "finalClear") {
       phaseTime += dt;
       updateFinalClear(dt);
@@ -4631,6 +5331,7 @@
     }
 
     player.roll = 0; // ロールを廃してスペースハリアー特有の平行移動に統一
+    updatePlayerRolling(dt);
 
     camera.pos.x += (player.pos.x - camera.pos.x) * Math.min(1, dt * 9);
     camera.pos.y += (player.pos.y + 6 - camera.pos.y) * Math.min(1, dt * 6);
@@ -4671,6 +5372,7 @@
     player.pos.y += (targetY - player.pos.y) * Math.min(1, dt * 1.6);
     player.pos.x *= Math.pow(0.6, dt * 60);
     player.roll *= Math.pow(0.18, dt * 60);
+    updatePlayerRolling(dt);
 
     camera.pos.x += (player.pos.x - camera.pos.x) * Math.min(1, dt * 1.4);
     camera.pos.y = player.pos.y + 16 - climb * 6;
@@ -4731,6 +5433,83 @@
     queueStage2Music();
   }
 
+  function scheduleFinalBossStage(delay = 3.0) {
+    // 最終ボス戦への移行を遅延予約
+    finalBossQueued = true;
+    finalBossCountdown = delay;
+  }
+
+  function startFinalBossStage(skipFullRestore = false) {
+    // 最終ボス戦の空間とステータスを初期化
+    setupFinalBoss();
+    stopStageMusic();
+    const desiredDistance = finalBossDistanceConstraint.max - 40;
+    player.pos.x = 0;
+    player.pos.y = 240;
+    player.pos.z = boss.pos.z + desiredDistance;
+    player.vel.x = 0;
+    player.vel.y = 0;
+    player.roll = 0;
+    resetPlayerVitals(skipFullRestore);
+    player.shield = player.maxShield;
+    player.invuln = 1.2;
+    missilesRemaining = MISSILE_STOCK_MAX;
+    enemyObjects.length = 0;
+    enemyShots.length = 0;
+    playerShots.length = 0;
+    playerMissiles.length = 0;
+    explosions.length = 0;
+    shieldPickups.length = 0;
+    spaceScene.waveTimer = 0;
+    spaceScene.waveInterval = 8.0;
+    if (!spaceScene.stars.length) {
+      initSpaceScene();
+    }
+    spaceScene.objects.length = 0;
+    spaceScene.rings.length = 0;
+    spaceScene.walkers.length = 0;
+    spaceScene.corridors.length = 0;
+    spaceScene.guideBeacons.length = 0;
+    if (spaceScene.stars.length) {
+      spaceScene.stars.forEach((star) => {
+        star.z = player.pos.z - 400 - Math.random() * 2600;
+      });
+    }
+    environment = "space";
+    skyMix = 1;
+    camera.pos.x = player.pos.x;
+    camera.pos.y = player.pos.y + 26;
+    camera.pos.z = player.pos.z + 60;
+    boss.active = true;
+    boss.fireCooldown = 2.4;
+    boss.suctionCooldown = 3.0;
+    boss.suctionActive = false;
+    boss.suctionProgress = 0;
+    phaseTime = 0;
+    stageClear = false;
+    finalBossQueued = false;
+    finalBossCountdown = 0;
+    gamePhase = "finalBoss";
+    queueStage3Music();
+  }
+
+  function startFinalBossTest() {
+    // テストモードから最終ボス戦へ直接遷移
+    startFinalBossStage(true);
+  }
+
+  function prepareFinalBossTransition() {
+    // 戦艦撃破後の間を設けて最終ボス戦を起動
+    scheduleFinalBossStage(3.2);
+    stageClear = false;
+    enemyObjects.length = 0;
+    enemyShots.length = 0;
+    shieldPickups.length = 0;
+    playerShots.length = 0;
+    playerMissiles.length = 0;
+    stopStageMusic();
+  }
+
   // === 宇宙ステージの更新 ===
   function updateStage2(dt) {
     environment = "space";
@@ -4769,6 +5548,7 @@
     }
 
     player.roll = 0;
+    updatePlayerRolling(dt);
 
     checkSpaceCollisions();
     updateShieldPickups(dt);
@@ -4785,6 +5565,67 @@
     updatePlayerWeapons(dt);
     updateProjectiles(dt);
     updateExplosions(dt);
+    if (finalBossQueued) {
+      finalBossCountdown -= dt;
+      if (finalBossCountdown <= 0) {
+        finalBossQueued = false;
+        startFinalBossStage(false);
+        return;
+      }
+    }
+  }
+
+  function updateFinalBossStage(dt) {
+    environment = "space";
+    skyMix = 1;
+    const lateralSpeed = 200;
+    const verticalSpeed = 210;
+    const boundsX = 52;
+    const boundsY = 260;
+    const minAltitude = 140;
+
+    let inputX = 0;
+    let inputY = 0;
+    if (keys.has("ArrowLeft") || keys.has("KeyA")) inputX -= 1;
+    if (keys.has("ArrowRight") || keys.has("KeyD")) inputX += 1;
+    if (keys.has("ArrowUp") || keys.has("KeyW")) inputY -= 1;
+    if (keys.has("ArrowDown") || keys.has("KeyS")) inputY += 1;
+
+    const deltaX = inputX * lateralSpeed * dt;
+    const deltaY = inputY * verticalSpeed * dt;
+    player.pos.x = clamp(player.pos.x + deltaX, -boundsX, boundsX);
+    player.pos.y = clamp(player.pos.y + deltaY, minAltitude, boundsY);
+    player.vel.x = deltaX / Math.max(dt, 1e-4);
+    player.vel.y = deltaY / Math.max(dt, 1e-4);
+
+    if (boss.active && !boss.destroyed) {
+      const distance = player.pos.z - boss.pos.z;
+      const minDist = boss.chargeActive ? finalBossChargeConstraint.min : finalBossDistanceConstraint.min;
+      const maxDist = boss.chargeActive ? finalBossChargeConstraint.max : finalBossDistanceConstraint.max;
+      const clamped = clamp(distance, minDist, maxDist);
+      const targetZ = boss.pos.z + clamped;
+      player.pos.z += (targetZ - player.pos.z) * Math.min(1, dt * 3.4);
+    } else {
+      player.pos.z -= player.speedForward * 0.6 * dt;
+    }
+
+    camera.pos.x += (player.pos.x - camera.pos.x) * Math.min(1, dt * 7);
+    camera.pos.y += (player.pos.y + 16 - camera.pos.y) * Math.min(1, dt * 4.6);
+    camera.pos.z += (player.pos.z + 56 - camera.pos.z) * Math.min(1, dt * 3.4);
+    updatePlayerRolling(dt);
+
+    if (boss.suctionActive) {
+      camera.shake = Math.max(camera.shake, 1.2 + boss.suctionProgress * 0.6);
+    }
+    if (boss.chargeActive) {
+      camera.shake = Math.max(camera.shake, 0.8 + boss.chargeProgress * 1.2);
+    }
+
+    animateStars(dt);
+    updateBoss(dt);
+    updatePlayerWeapons(dt);
+    updateProjectiles(dt);
+    updateExplosions(dt);
   }
 
   // === 最終クリア演出 ===
@@ -4796,6 +5637,7 @@
     player.pos.z -= player.speedForward * 0.8 * dt;
     player.pos.y += dt * 32;
     player.roll *= Math.pow(0.2, dt * 60);
+    updatePlayerRolling(dt);
     camera.pos.x += (player.pos.x - camera.pos.x) * Math.min(1, dt * 0.8);
     camera.pos.y = player.pos.y + 14;
     camera.pos.z = player.pos.z + 68;
@@ -4810,6 +5652,7 @@
     player.vel.y *= Math.pow(0.12, dt * 60);
     player.pos.z -= player.speedForward * 0.25 * dt;
     player.roll *= Math.pow(0.2, dt * 60);
+    updatePlayerRolling(dt);
     camera.pos.x += (player.pos.x - camera.pos.x) * Math.min(1, dt * 0.9);
     camera.pos.y += (player.pos.y + 8 - camera.pos.y) * Math.min(1, dt * 0.9);
     camera.pos.z += (player.pos.z + 44 - camera.pos.z) * Math.min(1, dt * 1.1);
@@ -4853,6 +5696,9 @@
       : "MISSILES ∞"; // 無限ストックであることをHUDに表示
     if (gamePhase === "stage0") {
       hudLabel.textContent = "LAUNCH BAY / PREP SEQUENCE";
+    } else if (gamePhase === "finalBoss" && boss.variant === "finalFace" && boss.active && !boss.destroyed) {
+      const suctionStatus = boss.suctionActive ? "SINGULARITY" : "STABLE FIELD";
+      hudLabel.textContent = `FINAL BOSS / ${vitalsText} / ${missileText} / ${suctionStatus}`;
     } else if (stageClear) {
       hudLabel.textContent = "MISSION COMPLETE";
     } else if (gamePhase === "cityExit") {
@@ -4905,14 +5751,57 @@
         drawEdges(bossGroups.bridge.edges, "rgba(0, 255, 255, 0.82)", 3.0, "rgba(0, 255, 230, 0.88)", bossGroups.bridge.transform);
         drawEdges(bossGroups.cannon.edges, "rgba(0, 255, 220, 0.95)", 3.6, "rgba(0, 255, 200, 0.92)", bossGroups.cannon.transform);
         drawEdges(bossGroups.antenna.edges, "rgba(160, 255, 255, 0.8)", 2.2, "rgba(120, 220, 255, 0.82)", bossGroups.antenna.transform);
-      } else {
+      } else if (bossGroups.variant === "tank") {
         drawEdges(bossGroups.treads.edges, "rgba(0, 70, 160, 0.85)", 2.4, "rgba(0, 70, 220, 0.8)", bossGroups.treads.transform);
         drawEdges(bossGroups.base.edges, "rgba(0, 120, 220, 0.9)", 2.8, "rgba(0, 120, 255, 0.9)", bossGroups.base.transform);
         drawEdges(bossGroups.hull.edges, "rgba(0, 150, 255, 0.95)", 2.6, "rgba(0, 160, 255, 0.9)", bossGroups.hull.transform);
         drawEdges(bossGroups.turret.edges, "rgba(0, 200, 255, 0.95)", 3.0, "rgba(0, 220, 255, 0.9)", bossGroups.turret.transform);
         drawEdges(bossGroups.cannon.edges, "rgba(0, 255, 230, 0.95)", 3.2, "rgba(0, 255, 200, 0.9)", bossGroups.cannon.transform);
         drawEdges(bossGroups.antenna.edges, "rgba(0, 255, 255, 0.9)", 2.2, "rgba(0, 255, 255, 0.8)", bossGroups.antenna.transform);
+      } else if (bossGroups.variant === "finalFace") {
+        drawEdges(bossGroups.outline.edges, "rgba(0, 210, 255, 0.92)", 3.6, "rgba(0, 160, 255, 0.85)", bossGroups.outline.transform);
+        drawEdges(bossGroups.crown.edges, "rgba(0, 255, 240, 0.88)", 3.0, "rgba(0, 200, 255, 0.82)", bossGroups.crown.transform);
+        drawEdges(bossGroups.eyes.edges, "rgba(0, 255, 255, 0.95)", 3.2, "rgba(0, 200, 255, 0.88)", bossGroups.eyes.transform);
+        drawEdges(bossGroups.nose.edges, "rgba(0, 200, 255, 0.9)", 2.6, "rgba(0, 140, 255, 0.82)", bossGroups.nose.transform);
+        drawEdges(bossGroups.mouth.edges, "rgba(0, 170, 255, 0.9)", 3.4, "rgba(0, 120, 255, 0.8)", bossGroups.mouth.transform);
+        if (boss.suctionActive && boss.suctionProgress > 0) {
+          const haloAlpha = 0.25 + boss.suctionProgress * 0.35;
+          ctx.strokeStyle = `rgba(0, 255, 255, ${haloAlpha})`;
+          ctx.shadowColor = `rgba(0, 200, 255, ${haloAlpha})`;
+          ctx.shadowBlur = 24 * haloAlpha;
+          ctx.lineWidth = 4.2;
+          const halo = bossLocalToWorld(0, -18, -80);
+          const proj = projectPoint(halo);
+          if (proj) {
+            ctx.beginPath();
+            ctx.arc(proj.x, proj.y, 46 + boss.suctionProgress * 14, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.shadowBlur = 0;
+        }
+        if (boss.laughTimer > 0) {
+          const laughPhase = clamp(1 - boss.laughTimer / 1.6, 0, 1);
+          const cycles = 3.2;
+          const wave = Math.sin(laughPhase * Math.PI * cycles);
+          const mouthOpen = Math.pow(Math.max(0, wave), 1.2);
+          drawFinalBossLaughMouth(mouthOpen);
+        }
       }
+    }
+
+    if (boss.variant === "finalFace" && boss.active && boss.laughTimer > 0) {
+      // 笑い演出のオーバーレイを中央に表示
+      const laughAlpha = Math.min(1, boss.laughTimer / 1.6);
+      ctx.save();
+      ctx.globalAlpha = 0.8 * laughAlpha;
+      ctx.fillStyle = "rgba(0, 225, 255, 0.9)";
+      ctx.font = `${64 * Math.max(canvas.width / 1280, canvas.height / 720)}px \"Helvetica Neue\", system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(0, 120, 255, 0.7)";
+      ctx.shadowBlur = 26;
+      ctx.fillText("WAHAHA!!", canvas.width * 0.5, canvas.height * 0.26);
+      ctx.restore();
     }
 
     // 敵機描画（空中・地上の両方）
@@ -4963,6 +5852,9 @@
     }
     const nowFrame = performance.now();
     const invulnFlash = player.invuln > 0 && Math.floor(nowFrame * 0.02) % 2 === 0;
+    if (player.visible) {
+      drawInvulnAura();
+    }
     if (player.visible && (!invulnFlash || gamePhase === "stage0")) {
       drawEdges(getPlayerEdges(), "rgba(0, 188, 255, 0.95)", 2.4, "rgba(0, 188, 255, 0.9)");
     }
